@@ -859,6 +859,52 @@ install_nextcloud() {
     ok "Nextcloud instalado e configurado"
 }
 
+# Adiciona ao config.php blocos comentados de trusted_domains e
+# trusted_proxies, para o administrador ativar depois.
+# Roda por último: qualquer "occ config:system:set" (ou alteração pelo
+# painel) reescreve o config.php e remove os comentários.
+add_config_comments() {
+    local f="$NC_INSTALL_DIR/config/config.php" tmp
+    log "Adicionando configurações comentadas em $f"
+    [ "$(tail -n1 "$f")" = ");" ] || { warn "Formato inesperado de $f; configurações comentadas não adicionadas"; return 0; }
+    tmp="$(mktemp "$f.XXXXXX")"
+    {
+        head -n -1 "$f"
+        cat <<'EOF'
+  # --- Configurações opcionais (adicionadas pelo instalador) ---
+  # Para ativar, remova o "//" do início das linhas do bloco e ajuste os
+  # valores. Ao ativar, apague o 'trusted_domains' definido acima, pois o
+  # PHP usa a última definição da chave.
+  # Atenção: alterações via occ ou pelo painel reescrevem este arquivo e
+  # removem estes comentários.
+  #
+  # Domínios e IPs pelos quais o Nextcloud pode ser acessado
+  // 'trusted_domains' =>
+  // array (
+  //   0 => 'ip-domain',
+  //   1 => 'nextcloud.dominio',
+  // ),
+  #
+  # IPs dos proxies reversos à frente do Nextcloud
+  // 'trusted_proxies' =>
+  // array (
+  //   0 => 'ip-proxie',
+  // ),
+);
+EOF
+    } > "$tmp"
+    if "$PHP_BIN" -l "$tmp" >/dev/null 2>&1; then
+        chown --reference="$f" "$tmp"
+        chmod --reference="$f" "$tmp"
+        mv -f "$tmp" "$f"
+        if selinux_enabled; then restorecon "$f"; fi
+        ok "Configurações comentadas adicionadas ao config.php"
+    else
+        rm -f "$tmp"
+        warn "Erro de sintaxe ao adicionar as configurações comentadas; config.php mantido sem alterações"
+    fi
+}
+
 configure_cron() {
     log "Configurando tarefas em segundo plano (systemd timer)"
     cat > /etc/systemd/system/nextcloud-cron.service <<EOF
@@ -1042,6 +1088,7 @@ main() {
     configure_firewall
     configure_cron
     configure_letsencrypt
+    add_config_comments
     save_credentials
 }
 

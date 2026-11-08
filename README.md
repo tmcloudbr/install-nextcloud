@@ -122,6 +122,35 @@ Se o download via `curl` for interrompido no meio, nada é executado: todo o có
 
 Acesse a URL exibida no final e entre com o usuário administrador.
 
+### Configurações opcionais no `config.php`
+
+No fim do `config/config.php`, o script adiciona blocos **comentados** de `trusted_domains` e `trusted_proxies`, com valores de exemplo:
+
+```php
+  # Domínios e IPs pelos quais o Nextcloud pode ser acessado
+  // 'trusted_domains' =>
+  // array (
+  //   0 => 'ip-domain',
+  //   1 => 'nextcloud.dominio',
+  // ),
+  #
+  # IPs dos proxies reversos à frente do Nextcloud
+  // 'trusted_proxies' =>
+  // array (
+  //   0 => 'ip-proxie',
+  // ),
+```
+
+Para ativar um bloco:
+
+1. remova o `//` do início de cada linha dele (as linhas com `#` são só descrição);
+2. troque os valores de exemplo pelos reais;
+3. se ativar `trusted_domains`, apague o `trusted_domains` que já existe mais acima no arquivo, porque o PHP usa a última definição da chave.
+
+Para conferir, rode `occ config:system:get trusted_domains` e `occ config:system:get trusted_proxies`.
+
+> **Atenção:** o Nextcloud reescreve o `config.php` sempre que uma configuração é alterada pelo `occ config:system:set` ou pelo painel. Isso **remove os comentários**. Os valores já ativados (sem `//`) são mantidos.
+
 Comandos úteis:
 
 ```bash
