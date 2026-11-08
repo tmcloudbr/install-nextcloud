@@ -119,8 +119,25 @@ Se o download via `curl` for interrompido no meio, nada é executado: todo o có
 |---|---|
 | `/root/nextcloud-credentials.txt` | URL, usuário e senha do admin e credenciais do banco (permissão `600`) |
 | `/var/log/nextcloud-install.log` | Log completo da instalação |
+| `<install-dir>/config/tmcloud.config.php` | Configurações extras comentadas (`trusted_domains`, `trusted_proxies`) |
 
 Acesse a URL exibida no final e entre com o usuário administrador.
+
+### Configurações extras (`tmcloud.config.php`)
+
+O script cria `config/tmcloud.config.php` com blocos de `trusted_domains` e `trusted_proxies` já preenchidos, mas **comentados**. Para ativar um bloco, remova o `//` do início de cada linha dele (as linhas com `#` são só descrição) e ajuste os valores:
+
+```php
+  # IPs dos proxies reversos à frente do Nextcloud
+  'trusted_proxies' =>
+  array (
+    0 => '191.168.0.234',
+  ),
+```
+
+Esse arquivo é lido junto com o `config.php`, e os valores dele têm prioridade. Ele fica separado porque o Nextcloud reescreve o `config.php` a cada alteração feita pelo `occ` ou pelo painel, e isso apagaria os comentários. Os arquivos `config/*.config.php` nunca são reescritos.
+
+Ao ativar `trusted_domains` nesse arquivo, a lista **substitui** a do `config.php`: inclua todos os domínios e IPs de acesso. Para conferir, rode `occ config:system:get trusted_domains`.
 
 Comandos úteis:
 

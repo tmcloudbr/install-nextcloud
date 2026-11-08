@@ -856,7 +856,52 @@ install_nextcloud() {
     occ background:cron
     occ db:add-missing-indices || warn "db:add-missing-indices falhou"
     occ maintenance:repair --include-expensive || warn "maintenance:repair falhou"
+    write_extra_config
     ok "Nextcloud instalado e configurado"
+}
+
+# Configurações extras, comentadas, para o administrador ativar depois.
+# Ficam em config/tmcloud.config.php e não no config.php porque o Nextcloud
+# reescreve o config.php a cada alteração (occ/painel) e apaga comentários;
+# os arquivos config/*.config.php são lidos junto e nunca são reescritos.
+write_extra_config() {
+    local f="$NC_INSTALL_DIR/config/tmcloud.config.php"
+    log "Criando $f (configurações comentadas)"
+    cat > "$f" <<'EOF'
+<?php
+/*
+ * Configurações adicionais do Nextcloud (gerado pelo instalador TMCloud).
+ *
+ * Este arquivo é carregado junto com o config.php. Os valores definidos
+ * aqui têm prioridade sobre os do config.php para as mesmas chaves.
+ *
+ * Para ativar, remova o "//" do início das linhas de cada bloco, ajuste os
+ * valores e valide com:
+ *   sudo -u <usuario-web> php occ config:list system
+ *
+ * Atenção: ao ativar 'trusted_domains' aqui, esta lista SUBSTITUI a que
+ * está no config.php — inclua todos os domínios/IPs de acesso.
+ */
+$CONFIG = array (
+
+  # Domínios e IPs pelos quais o Nextcloud pode ser acessado
+  // 'trusted_domains' =>
+  // array (
+  //   0 => '191.168.0.246',
+  //   1 => 'nextcloud.tmcloud.com.br',
+  // ),
+
+  # IPs dos proxies reversos à frente do Nextcloud
+  // 'trusted_proxies' =>
+  // array (
+  //   0 => '191.168.0.234',
+  // ),
+
+);
+EOF
+    chown "$WEB_USER:$WEB_USER" "$f"
+    chmod 640 "$f"
+    "$PHP_BIN" -l "$f" >/dev/null || die "Erro de sintaxe em $f"
 }
 
 configure_cron() {
