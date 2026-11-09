@@ -48,6 +48,18 @@ NC_EMAIL="${NC_EMAIL:-}"
 NC_PHP_VERSION="${NC_PHP_VERSION:-}"     # vazio = automático
 NC_FORCE="${NC_FORCE:-no}"
 NC_CHECK_ONLY="${NC_CHECK_ONLY:-no}"
+NC_TALK_HPB="${NC_TALK_HPB:-no}"
+NC_TALK_PORT="${NC_TALK_PORT:-3478}"
+NC_TALK_TURN_HOST="${NC_TALK_TURN_HOST:-}"   # vazio = mesmo domínio do Nextcloud
+NC_PROXY_IP="${NC_PROXY_IP:-}"               # proxy reverso que termina o SSL
+NC_ASSUME_YES="${NC_ASSUME_YES:-no}"         # yes = não faz perguntas
+
+# Serviços auxiliares em container (Podman + systemd)
+WHITEBOARD_IMAGE="${WHITEBOARD_IMAGE:-ghcr.io/nextcloud-releases/whiteboard:release}"
+TALK_IMAGE="${TALK_IMAGE:-ghcr.io/nextcloud-releases/aio-talk:latest}"
+WHITEBOARD_PORT=3002
+SIGNALING_PORT=8081
+SERVICES_ENV_DIR="/etc/nextcloud-services"
 
 # Faixa de versões do PHP aceitas pelo Nextcloud. Por padrão é lida do
 # lib/versioncheck.php da versão escolhida; estes valores são o fallback.
@@ -138,12 +150,20 @@ Opções:
   --phone-region XX       Região telefônica padrão ISO 3166-1 (padrão: BR)
   --letsencrypt           Emite certificado HTTPS com Let's Encrypt (requer --domain e --email)
   --email EMAIL           E-mail para o Let's Encrypt
+  --proxy IP              Nextcloud atrás de um proxy reverso que cuida do SSL (requer --domain)
+  --talk-hpb              Instala o back-end de alto desempenho do Talk (requer HTTPS)
+  --turn-host NOME        Nome DNS do TURN do Talk, sem proxy/CDN (implica --talk-hpb; padrão: o domínio)
+  --talk-port PORTA       Porta TCP/UDP do TURN do Talk (padrão: 3478)
+  -y, --yes               Não faz perguntas (usa só as opções informadas)
   --check                 Apenas detecta o sistema e mostra o plano, sem instalar nada
   --force                 Continua mesmo em distribuição/versão não suportada
   -h, --help              Mostra esta ajuda
 
 Todas as opções também podem ser passadas por variável de ambiente
-(NC_DOMAIN, NC_ADMIN_PASS, NC_VERSION, NC_LETSENCRYPT=yes, ...).
+(NC_DOMAIN, NC_ADMIN_PASS, NC_VERSION, NC_LETSENCRYPT=yes, NC_PROXY_IP, ...).
+
+Sem --yes, e quando há um terminal, o script pergunta no início se a
+instalação fica atrás de um proxy e qual o nome DNS do TURN do Talk.
 EOF
 }
 
@@ -164,6 +184,11 @@ parse_args() {
             --phone-region) NC_PHONE_REGION="${2:?--phone-region requer um valor}"; shift 2 ;;
             --email)        NC_EMAIL="${2:?--email requer um valor}"; shift 2 ;;
             --letsencrypt)  NC_LETSENCRYPT="yes"; shift ;;
+            --talk-hpb)     NC_TALK_HPB="yes"; shift ;;
+            --turn-host)    NC_TALK_TURN_HOST="${2:?--turn-host requer um valor}"; NC_TALK_HPB="yes"; shift 2 ;;
+            --proxy)        NC_PROXY_IP="${2:?--proxy requer o IP do proxy}"; shift 2 ;;
+            -y|--yes)       NC_ASSUME_YES="yes"; shift ;;
+            --talk-port)    NC_TALK_PORT="${2:?--talk-port requer um valor}"; shift 2 ;;
             --check)        NC_CHECK_ONLY="yes"; shift ;;
             --force)        NC_FORCE="yes"; shift ;;
             -h|--help)      usage; exit 0 ;;
@@ -185,10 +210,90 @@ parse_args() {
     if [ -n "$NC_PHP_VERSION" ] && [[ ! "$NC_PHP_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
         die "--php-version deve estar no formato X.Y (ex.: 8.3)"
     fi
+}
+
+# HTTPS disponível: certificado próprio (Let's Encrypt) ou proxy reverso com SSL
+nc_https() { [ "$NC_LETSENCRYPT" = "yes" ] || [ -n "$NC_PROXY_IP" ]; }
+
+is_hostname() { [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]]; }
+
+# Perguntas só quando há um terminal. Com "curl | bash" o stdin é o próprio
+# script, por isso a leitura é sempre de /dev/tty.
+can_prompt() { [ "$NC_ASSUME_YES" != "yes" ] && { : </dev/tty; } 2>/dev/null; }
+
+# ask VARIAVEL "Pergunta" [padrão]
+ask() {
+    local __var="$1" __q="$2" __def="${3:-}" __ans=""
+    if [ -n "$__def" ]; then __q="$__q [$__def]"; fi
+    printf '%s%s%s ' "$C_BLUE" "$__q" "$C_RESET" >/dev/tty
+    IFS= read -r __ans </dev/tty || __ans=""
+    printf -v "$__var" '%s' "${__ans:-$__def}"
+}
+
+ask_yes_no() {
+    local __a=""
+    ask __a "$1 [s/N]"
+    [[ "$__a" =~ ^[sSyY] ]]
+}
+
+ask_questions() {
+    can_prompt || return 0
+    printf '\n%sConfiguração inicial%s (Enter aceita o padrão)\n\n' "$C_GREEN" "$C_RESET" >/dev/tty
+
+    # 1. Proxy reverso
+    if [ -z "$NC_PROXY_IP" ] && [ "$NC_LETSENCRYPT" != "yes" ]; then
+        if ask_yes_no "O Nextcloud vai ficar atrás de um proxy reverso que cuida do SSL (ex.: DirectAdmin, nginx)?"; then
+            while :; do
+                ask NC_PROXY_IP "  IP do proxy, como este servidor o enxerga:"
+                is_ip "$NC_PROXY_IP" && break
+                printf '  IP inválido.\n' >/dev/tty
+            done
+            while [ -z "$NC_DOMAIN" ] || is_ip "$NC_DOMAIN"; do
+                ask NC_DOMAIN "  Domínio público do Nextcloud (ex.: cloud.exemplo.com.br):"
+            done
+        fi
+    fi
+
+    # 2. Nome DNS do TURN (Talk HPB)
+    if [ -z "$NC_TALK_TURN_HOST" ]; then
+        if ! nc_https; then
+            if [ "$NC_TALK_HPB" != "yes" ]; then
+                printf '  (O back-end de alto desempenho do Talk requer HTTPS — use proxy ou --letsencrypt para ativá-lo.)\n' >/dev/tty
+            fi
+        else
+            printf '\n  Back-end de alto desempenho do Talk: o nome do TURN deve apontar direto\n' >/dev/tty
+            printf '  para este servidor (sem proxy/CDN; na Cloudflare, "DNS only"), com a\n' >/dev/tty
+            printf '  porta %s TCP e UDP liberada.\n' "$NC_TALK_PORT" >/dev/tty
+            if [ "$NC_TALK_HPB" = "yes" ]; then
+                ask NC_TALK_TURN_HOST "  Nome DNS do TURN:" "$NC_DOMAIN"
+            else
+                ask NC_TALK_TURN_HOST "  Nome DNS do TURN (ex.: turn.exemplo.com.br; Enter para não instalar o HPB):"
+                if [ -n "$NC_TALK_TURN_HOST" ]; then NC_TALK_HPB="yes"; fi
+            fi
+        fi
+    fi
+    printf '\n' >/dev/tty
+}
+
+# Validações que dependem das respostas às perguntas
+validate_options() {
     if [ "$NC_LETSENCRYPT" = "yes" ]; then
         [ -n "$NC_DOMAIN" ] || die "--letsencrypt requer --domain"
         is_ip "$NC_DOMAIN" && die "--letsencrypt requer um domínio (não um IP)"
         [ -n "$NC_EMAIL" ] || die "--letsencrypt requer --email"
+    fi
+    if [ -n "$NC_PROXY_IP" ]; then
+        [ "$NC_LETSENCRYPT" = "yes" ] && die "--proxy e --letsencrypt não podem ser usados juntos (o SSL fica no proxy)"
+        is_ip "$NC_PROXY_IP" || die "--proxy requer um endereço IP"
+        [ -n "$NC_DOMAIN" ] && ! is_ip "$NC_DOMAIN" || die "--proxy requer --domain com o domínio público"
+    fi
+    if [ "$NC_TALK_HPB" = "yes" ]; then
+        nc_https || die "--talk-hpb requer HTTPS: use --proxy IP ou --letsencrypt (com --domain e --email)"
+        NC_TALK_TURN_HOST="${NC_TALK_TURN_HOST:-$NC_DOMAIN}"
+        is_hostname "$NC_TALK_TURN_HOST" || die "--turn-host inválido: $NC_TALK_TURN_HOST"
+    fi
+    if [[ ! "$NC_TALK_PORT" =~ ^[0-9]+$ ]] || [ "$NC_TALK_PORT" -lt 1 ] || [ "$NC_TALK_PORT" -gt 65535 ]; then
+        die "--talk-port deve ser um número entre 1 e 65535"
     fi
 }
 
@@ -445,7 +550,7 @@ install_debian() {
     fi
 
     local v="php${PHP_V}"
-    apt_install apache2 mariadb-server \
+    apt_install apache2 mariadb-server podman \
         "$v-fpm" "$v-cli" "$v-common" "$v-mysql" "$v-gd" "$v-curl" "$v-mbstring" \
         "$v-intl" "$v-xml" "$v-zip" "$v-bcmath" "$v-gmp" "$v-bz2"
 
@@ -474,7 +579,7 @@ configure_apache_debian() {
         if [ -e "$f" ]; then a2dismod -q "$(basename "$f" .load)"; fi
     done
     a2dismod -q mpm_prefork >/dev/null 2>&1 || true
-    a2enmod -q mpm_event proxy_fcgi setenvif rewrite headers env dir mime ssl
+    a2enmod -q mpm_event proxy_fcgi proxy proxy_http proxy_wstunnel setenvif rewrite headers env dir mime ssl
     a2enconf -q "php${PHP_V}-fpm"
     write_vhost "/etc/apache2/sites-available/nextcloud.conf"
     a2ensite -q nextcloud
@@ -581,7 +686,7 @@ install_rhel() {
     fi
 
     # curl não entra: já existe (o script roda via curl) e no EL 9 conflita com curl-minimal
-    dnf_install bzip2 tar tzdata openssl util-linux httpd mod_ssl mariadb-server \
+    dnf_install bzip2 tar tzdata openssl util-linux httpd mod_ssl mariadb-server podman \
         php php-fpm php-cli php-common php-mysqlnd php-gd php-mbstring php-intl \
         php-xml php-process php-bcmath php-gmp php-opcache php-pdo
 
@@ -652,6 +757,31 @@ configure_selinux() {
 # ---------------------------------------------------------------------------
 # Configuração comum
 # ---------------------------------------------------------------------------
+# Proxy reverso para os backends em container (Whiteboard e, se ativado, Talk HPB).
+# Ficam no vhost da porta 80 para o certbot copiá-los para o vhost HTTPS.
+vhost_proxy_rules() {
+    cat <<EOF
+    # Backend do Whiteboard (colaboração em tempo real)
+    RewriteEngine On
+    ProxyPass /whiteboard/ http://127.0.0.1:${WHITEBOARD_PORT}/
+    ProxyPassReverse /whiteboard/ http://127.0.0.1:${WHITEBOARD_PORT}/
+    RewriteCond %{HTTP:Upgrade} websocket [NC]
+    RewriteCond %{HTTP:Connection} upgrade [NC]
+    RewriteRule ^/whiteboard/(.*) ws://127.0.0.1:${WHITEBOARD_PORT}/\$1 [P,L]
+EOF
+    if [ "$NC_TALK_HPB" = "yes" ]; then
+        cat <<EOF
+
+    # Back-end de alto desempenho do Talk (signaling)
+    ProxyPass /standalone-signaling/ http://127.0.0.1:${SIGNALING_PORT}/
+    ProxyPassReverse /standalone-signaling/ http://127.0.0.1:${SIGNALING_PORT}/
+    RewriteCond %{HTTP:Upgrade} websocket [NC]
+    RewriteCond %{HTTP:Connection} upgrade [NC]
+    RewriteRule ^/standalone-signaling/(.*) ws://127.0.0.1:${SIGNALING_PORT}/\$1 [P,L]
+EOF
+    fi
+}
+
 write_vhost() {
     cat > "$1" <<EOF
 # Gerado pelo instalador do Nextcloud
@@ -671,6 +801,8 @@ write_vhost() {
     <IfModule mod_headers.c>
         Header always set Strict-Transport-Security "max-age=15552000; includeSubDomains"
     </IfModule>
+
+$(vhost_proxy_rules)
 
     ErrorLog \${APACHE_LOG_DIR}/nextcloud_error.log
     CustomLog \${APACHE_LOG_DIR}/nextcloud_access.log combined
@@ -839,7 +971,15 @@ install_nextcloud() {
     if [ "$SERVER_IP" != "$NC_DOMAIN" ]; then
         occ config:system:set trusted_domains 2 --value="$SERVER_IP"
     fi
-    occ config:system:set overwrite.cli.url --value="http://$NC_DOMAIN"
+    if [ -n "$NC_PROXY_IP" ]; then
+        # SSL terminado no proxy: o Nextcloud recebe HTTP, mas gera links em HTTPS
+        occ config:system:set trusted_proxies 0 --value="$NC_PROXY_IP"
+        occ config:system:set overwriteprotocol --value=https
+        occ config:system:set overwritehost --value="$NC_DOMAIN"
+        occ config:system:set overwrite.cli.url --value="https://$NC_DOMAIN"
+    else
+        occ config:system:set overwrite.cli.url --value="http://$NC_DOMAIN"
+    fi
     occ config:system:set htaccess.RewriteBase --value=/
     occ maintenance:update:htaccess
     occ config:system:set default_phone_region --value="$NC_PHONE_REGION"
@@ -978,9 +1118,166 @@ configure_letsencrypt() {
     NC_LETSENCRYPT="failed"
 }
 
+# ---------------------------------------------------------------------------
+# Serviços auxiliares em container (Whiteboard e Talk HPB)
+# ---------------------------------------------------------------------------
+nc_url() {
+    if nc_https; then echo "https://$NC_DOMAIN"; else echo "http://$NC_DOMAIN"; fi
+}
+
+# Habilita um app do Nextcloud, baixando-o da loja se não vier no pacote
+nc_enable_app() {
+    occ app:enable "$1" >/dev/null 2>&1 || occ app:install "$1"
+}
+
+# Espera um serviço HTTP aceitar conexões (até ~60 s); qualquer status HTTP serve
+wait_http() {
+    local i
+    for i in $(seq 1 30); do
+        curl -sS --max-time 2 -o /dev/null "$1" 2>/dev/null && return 0
+        sleep 2
+    done
+    return 1
+}
+
+open_port() {
+    local port="$1" proto="$2"
+    if systemctl is-active --quiet firewalld 2>/dev/null; then
+        firewall-cmd -q --permanent --add-port="$port/$proto"
+        firewall-cmd -q --reload
+    elif command -v ufw >/dev/null 2>&1 && [[ "$(ufw status 2>/dev/null || true)" == *"Status: active"* ]]; then
+        ufw allow "$port/$proto" >/dev/null
+    fi
+}
+
+# Cria uma unit do systemd que roda a imagem com o Podman.
+#   container_service NOME DESCRIÇÃO IMAGEM ARQUIVO_ENV [PUBLICAÇÃO_DE_PORTA...]
+container_service() {
+    local name="$1" desc="$2" image="$3" env_file="$4" podman ports="" p
+    shift 4
+    podman="$(command -v podman)" || return 1
+    for p in "$@"; do ports+=" -p $p"; done
+
+    log "Baixando a imagem $image"
+    "$podman" pull -q "$image" >/dev/null || return 1
+
+    cat > "/etc/systemd/system/$name.service" <<EOF
+# Gerado pelo instalador do Nextcloud
+[Unit]
+Description=${desc}
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Restart=always
+RestartSec=5
+ExecStartPre=-${podman} rm -f ${name}
+ExecStart=${podman} run --rm --name ${name} --env-file ${env_file}${ports} ${image}
+ExecStop=${podman} stop -t 10 ${name}
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable --now "$name.service"
+}
+
+write_env_file() {
+    local f="$1"; shift
+    mkdir -p "$SERVICES_ENV_DIR"
+    chmod 700 "$SERVICES_ENV_DIR"
+    (umask 077; printf '%s\n' "$@" > "$f")
+}
+
+configure_whiteboard() {
+    log "Configurando o backend do Whiteboard (colaboração em tempo real)"
+    local url secret env_file="$SERVICES_ENV_DIR/whiteboard.env"
+    url="$(nc_url)"
+    secret="$(random_pass 48)"
+
+    if ! nc_enable_app whiteboard; then
+        warn "Não foi possível habilitar o app whiteboard — backend não configurado"
+        return 0
+    fi
+    write_env_file "$env_file" "NEXTCLOUD_URL=$url" "JWT_SECRET_KEY=$secret"
+    if ! container_service nextcloud-whiteboard "Nextcloud Whiteboard (backend WebSocket)" \
+            "$WHITEBOARD_IMAGE" "$env_file" "127.0.0.1:${WHITEBOARD_PORT}:3002"; then
+        warn "Falha ao iniciar o container do Whiteboard — veja: journalctl -u nextcloud-whiteboard"
+        return 0
+    fi
+    occ config:app:set whiteboard collabBackendUrl --value="$url/whiteboard"
+    # jwt_secret_key é lazy + sensitive no lexicon do app: no Nextcloud 35 o
+    # "occ config:app:set" não consegue criá-la ("Config value were not updated"),
+    # mas o config:import grava normalmente. O arquivo é escrito antes do chown
+    # (com fs.protected_regular, o root não reescreve arquivo alheio no /tmp).
+    local import_file
+    import_file="$(mktemp)"
+    printf '{"apps":{"whiteboard":{"jwt_secret_key":"%s"}}}' "$secret" > "$import_file"
+    chmod 600 "$import_file"
+    chown "$WEB_USER" "$import_file"
+    occ config:import "$import_file" >/dev/null || warn "Falha ao gravar o segredo JWT do Whiteboard"
+    rm -f "$import_file"
+    if [ "$(occ config:app:get whiteboard jwt_secret_key 2>/dev/null || true)" != "$secret" ]; then
+        warn "O segredo JWT do Whiteboard não foi gravado — confira com: occ setupchecks"
+    fi
+
+    if wait_http "http://127.0.0.1:${WHITEBOARD_PORT}/"; then
+        ok "Whiteboard em tempo real ativo ($url/whiteboard)"
+    else
+        warn "O backend do Whiteboard ainda não respondeu — veja: journalctl -u nextcloud-whiteboard"
+    fi
+}
+
+configure_talk_hpb() {
+    [ "$NC_TALK_HPB" = "yes" ] || return 0
+    if ! nc_https; then
+        warn "Back-end de alto desempenho do Talk não instalado: requer HTTPS, e o Let's Encrypt falhou"
+        return 0
+    fi
+    log "Configurando o back-end de alto desempenho do Talk"
+    local turn_secret signaling_secret internal_secret env_file="$SERVICES_ENV_DIR/talk-hpb.env"
+    turn_secret="$(random_pass 48)"
+    signaling_secret="$(random_pass 48)"
+    internal_secret="$(random_pass 48)"
+
+    if ! nc_enable_app spreed; then
+        warn "Não foi possível habilitar o app spreed (Talk) — HPB não configurado"
+        return 0
+    fi
+    write_env_file "$env_file" \
+        "NC_DOMAIN=$NC_DOMAIN" \
+        "TALK_HOST=$NC_TALK_TURN_HOST" \
+        "TURN_DOMAIN=$NC_TALK_TURN_HOST" \
+        "TALK_PORT=$NC_TALK_PORT" \
+        "TURN_SECRET=$turn_secret" \
+        "SIGNALING_SECRET=$signaling_secret" \
+        "INTERNAL_SECRET=$internal_secret" \
+        "TZ=$NC_TIMEZONE"
+    if ! container_service nextcloud-talk-hpb "Nextcloud Talk HPB (signaling + Janus + NATS + TURN)" \
+            "$TALK_IMAGE" "$env_file" \
+            "127.0.0.1:${SIGNALING_PORT}:8081" \
+            "${NC_TALK_PORT}:${NC_TALK_PORT}/tcp" "${NC_TALK_PORT}:${NC_TALK_PORT}/udp"; then
+        warn "Falha ao iniciar o container do Talk HPB — veja: journalctl -u nextcloud-talk-hpb"
+        return 0
+    fi
+    open_port "$NC_TALK_PORT" tcp
+    open_port "$NC_TALK_PORT" udp
+
+    if ! wait_http "http://127.0.0.1:${SIGNALING_PORT}/api/v1/welcome"; then
+        warn "O signaling do Talk não respondeu — veja: journalctl -u nextcloud-talk-hpb"
+        return 0
+    fi
+    occ talk:signaling:add "https://$NC_DOMAIN/standalone-signaling/" "$signaling_secret" --verify \
+        || warn "Falha ao registrar o signaling no Talk (este servidor precisa acessar https://$NC_DOMAIN)"
+    occ talk:stun:add "$NC_TALK_TURN_HOST:$NC_TALK_PORT" || warn "Falha ao registrar o STUN no Talk"
+    occ talk:turn:add turn "$NC_TALK_TURN_HOST:$NC_TALK_PORT" udp,tcp --secret="$turn_secret" \
+        || warn "Falha ao registrar o TURN no Talk"
+    ok "Talk HPB ativo (signaling em https://$NC_DOMAIN/standalone-signaling/, TURN em $NC_TALK_TURN_HOST:$NC_TALK_PORT TCP/UDP)"
+}
+
 save_credentials() {
     local proto="http"
-    if [ "$NC_LETSENCRYPT" = "yes" ]; then proto="https"; fi
+    if nc_https; then proto="https"; fi
     umask 077
     cat > "$CREDENTIALS_FILE" <<EOF
 # Nextcloud — credenciais geradas em $(date '+%Y-%m-%d %H:%M:%S')
@@ -995,6 +1292,8 @@ Senha banco:    ${NC_DB_PASS}
 Aplicação:      ${NC_INSTALL_DIR}
 Dados:          ${NC_DATA_DIR}
 PHP:            ${PHP_V} (${FPM_SVC})
+
+Segredos dos serviços em container (Whiteboard/Talk): ${SERVICES_ENV_DIR}/
 EOF
     chmod 600 "$CREDENTIALS_FILE"
 
@@ -1010,7 +1309,22 @@ ${C_GREEN}═══════════════════════�
   Credenciais:    ${CREDENTIALS_FILE} (somente root)
   Log:            ${LOG_FILE}
 EOF
-    if [ "$NC_LETSENCRYPT" != "yes" ]; then
+    if [ -n "$NC_PROXY_IP" ]; then
+        cat <<EOF
+
+  ${C_YELLOW}Proxy reverso (${NC_PROXY_IP}):${C_RESET} encaminhe https://${NC_DOMAIN} para
+  http://${SERVER_IP}, repassando WebSocket (cabeçalhos Upgrade/Connection,
+  HTTP/1.1 e timeout longo) — necessário para o Whiteboard e o Talk.
+EOF
+    fi
+    if [ "$NC_TALK_HPB" = "yes" ]; then
+        cat <<EOF
+
+  ${C_YELLOW}Talk HPB:${C_RESET} ${NC_TALK_TURN_HOST} deve apontar direto para este servidor
+  (sem proxy/CDN), com a porta ${NC_TALK_PORT} TCP e UDP liberada até ele.
+EOF
+    fi
+    if ! nc_https; then
         cat <<EOF
 
   ${C_YELLOW}O acesso está em HTTP. Para produção, configure HTTPS:${C_RESET}
@@ -1033,6 +1347,9 @@ Plano de instalação:
   Dados:          $NC_DATA_DIR
   Banco:          $NC_DB_NAME (usuário $NC_DB_USER)
   Let's Encrypt:  $NC_LETSENCRYPT
+  Proxy reverso:  ${NC_PROXY_IP:-não}
+  Whiteboard:     backend em tempo real (Podman)
+  Talk HPB:       $NC_TALK_HPB$( [ "$NC_TALK_HPB" = "yes" ] && echo " (TURN em $NC_TALK_TURN_HOST:$NC_TALK_PORT TCP/UDP)" )
 
 EOF
 }
@@ -1042,6 +1359,8 @@ main() {
     parse_args "$@"
     [ "$(id -u)" -eq 0 ] || die "Execute como root (ex.: curl ... | sudo bash)"
     command -v systemctl >/dev/null 2>&1 || die "systemd é necessário"
+    ask_questions
+    validate_options
 
     # O script pode estar sendo lido do stdin (curl | bash): nenhum comando
     # filho deve consumir o stdin.
@@ -1091,6 +1410,8 @@ main() {
     configure_firewall
     configure_cron
     configure_letsencrypt
+    configure_whiteboard
+    configure_talk_hpb
     add_config_comments
     save_credentials
 }
