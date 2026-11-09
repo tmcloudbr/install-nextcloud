@@ -1112,7 +1112,20 @@ configure_whiteboard() {
         return 0
     fi
     occ config:app:set whiteboard collabBackendUrl --value="$url/whiteboard"
-    occ config:app:set whiteboard jwt_secret_key --value="$secret"
+    # jwt_secret_key é lazy + sensitive no lexicon do app: no Nextcloud 35 o
+    # "occ config:app:set" não consegue criá-la ("Config value were not updated"),
+    # mas o config:import grava normalmente. O arquivo é escrito antes do chown
+    # (com fs.protected_regular, o root não reescreve arquivo alheio no /tmp).
+    local import_file
+    import_file="$(mktemp)"
+    printf '{"apps":{"whiteboard":{"jwt_secret_key":"%s"}}}' "$secret" > "$import_file"
+    chmod 600 "$import_file"
+    chown "$WEB_USER" "$import_file"
+    occ config:import "$import_file" >/dev/null || warn "Falha ao gravar o segredo JWT do Whiteboard"
+    rm -f "$import_file"
+    if [ "$(occ config:app:get whiteboard jwt_secret_key 2>/dev/null || true)" != "$secret" ]; then
+        warn "O segredo JWT do Whiteboard não foi gravado — confira com: occ setupchecks"
+    fi
 
     if wait_http "http://127.0.0.1:${WHITEBOARD_PORT}/"; then
         ok "Whiteboard em tempo real ativo ($url/whiteboard)"
