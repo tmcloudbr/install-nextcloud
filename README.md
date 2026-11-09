@@ -26,6 +26,22 @@ curl -fsSL https://raw.githubusercontent.com/tmcloudbr/install-nextcloud/main/in
   | sudo bash -s -- --domain cloud.exemplo.com.br --letsencrypt --email admin@exemplo.com.br --talk-hpb
 ```
 
+Atrás de um proxy reverso que já cuida do SSL (DirectAdmin, nginx etc.), com o HPB do Talk:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tmcloudbr/install-nextcloud/main/install.sh \
+  | sudo bash -s -- --domain cloud.exemplo.com.br --proxy 10.0.0.5 --turn-host turn.exemplo.com.br
+```
+
+### Perguntas no início
+
+Quando há um terminal, o script faz duas perguntas antes de começar:
+
+1. **Se o Nextcloud vai ficar atrás de um proxy reverso que cuida do SSL.** Se sim, pede o IP do proxy (como o servidor o enxerga) e o domínio público. É o mesmo que usar `--proxy IP --domain DOMINIO`.
+2. **O nome DNS do TURN**, para o back-end de alto desempenho do Talk. Só é perguntado quando há HTTPS (proxy ou `--letsencrypt`). Se você deixar em branco, o HPB não é instalado. É o mesmo que usar `--turn-host NOME`.
+
+As perguntas são puladas quando a resposta já veio por opção ou variável de ambiente. Com `--yes`, ou sem terminal (em automações), nada é perguntado e valem só as opções informadas. As respostas são lidas do terminal (`/dev/tty`), então funcionam também com `curl | sudo bash`.
+
 Para ver o que seria feito, sem instalar nada:
 
 ```bash
@@ -74,7 +90,8 @@ Cada versão do Nextcloud aceita uma faixa de versões do PHP (o Nextcloud 35, p
 - Acesso à internet: download.nextcloud.com, GitHub, `ghcr.io` (imagens dos containers) e os repositórios da distribuição
 - Pelo menos 2 GB de RAM e 2 GB livres em disco, mais o espaço para os arquivos dos usuários
 - Para `--letsencrypt`: um domínio cujo DNS aponte para o servidor, com as portas 80 e 443 abertas
-- Para `--talk-hpb`: HTTPS (`--letsencrypt`) e a porta do TURN (padrão 3478, **TCP e UDP**) liberada até o servidor, inclusive em firewalls externos/grupos de segurança da nuvem
+- Para `--proxy`: o proxy deve encaminhar o domínio para o servidor em HTTP, **repassando WebSocket** (veja [Atrás de um proxy reverso](#atrás-de-um-proxy-reverso))
+- Para `--talk-hpb`: HTTPS (`--letsencrypt` ou `--proxy`) e um nome DNS para o TURN que aponte **direto** para o servidor, sem proxy ou CDN. Na Cloudflare, use "DNS only" (nuvem cinza). A porta do TURN (padrão 3478, **TCP e UDP**) precisa estar liberada e encaminhada até o servidor, inclusive em firewalls externos e grupos de segurança da nuvem.
 
 ## Opções
 
@@ -94,9 +111,12 @@ Cada versão do Nextcloud aceita uma faixa de versões do PHP (o Nextcloud 35, p
 | `--phone-region XX` | `NC_PHONE_REGION` | `BR` | Região telefônica (ISO 3166-1) |
 | `--letsencrypt` | `NC_LETSENCRYPT=yes` | desativado | Emite certificado HTTPS (requer `--domain` e `--email`) |
 | `--email EMAIL` | `NC_EMAIL` | — | E-mail para o Let's Encrypt |
-| `--talk-hpb` | `NC_TALK_HPB=yes` | desativado | Instala o back-end de alto desempenho do Talk (requer `--letsencrypt`) |
+| `--proxy IP` | `NC_PROXY_IP` | — | Nextcloud atrás de um proxy reverso que cuida do SSL (requer `--domain`; não combina com `--letsencrypt`) |
+| `--talk-hpb` | `NC_TALK_HPB=yes` | desativado | Instala o back-end de alto desempenho do Talk (requer HTTPS: `--letsencrypt` ou `--proxy`) |
+| `--turn-host NOME` | `NC_TALK_TURN_HOST` | o domínio | Nome DNS do TURN, sem proxy/CDN (implica `--talk-hpb`) |
 | `--talk-port PORTA` | `NC_TALK_PORT` | `3478` | Porta TCP/UDP do TURN do Talk |
 | `--check` | `NC_CHECK_ONLY=yes` | — | Só detecta o sistema e mostra o plano |
+| `-y`, `--yes` | `NC_ASSUME_YES=yes` | — | Não faz perguntas |
 | `--force` | `NC_FORCE=yes` | — | Continua em distribuição ou versão não suportada |
 | `-h`, `--help` | — | — | Mostra a ajuda |
 
@@ -109,6 +129,7 @@ curl -fsSL https://raw.githubusercontent.com/tmcloudbr/install-nextcloud/main/in
 
 ## O que o script faz
 
+0. Faz as [perguntas iniciais](#perguntas-no-início) (proxy e TURN), se houver terminal.
 1. Detecta a distribuição e a versão e verifica arquitetura, memória, disco, conectividade e se já existe uma instalação no destino.
 2. Instala Apache, PHP-FPM com as extensões exigidas e recomendadas (APCu, Redis, Imagick, OPcache…), MariaDB e Redis (ou Valkey), adicionando os repositórios externos só quando necessários.
 3. Configura:
@@ -122,6 +143,8 @@ curl -fsSL https://raw.githubusercontent.com/tmcloudbr/install-nextcloud/main/in
 8. Com `--letsencrypt`, emite o certificado com o `certbot` e redireciona HTTP para HTTPS.
 9. Sobe o backend do **Whiteboard** (container `ghcr.io/nextcloud-releases/whiteboard`, via Podman + systemd, ouvindo só em `127.0.0.1:3002`) e configura no app a URL `/whiteboard` e o segredo JWT. Isso resolve o aviso *"O URL do servidor WebSocket não está configurado"*.
 10. Com `--talk-hpb`, sobe o container `ghcr.io/nextcloud-releases/aio-talk` (signaling + Janus + NATS + TURN), com o signaling em `127.0.0.1:8081` e o TURN na porta 3478 TCP/UDP. Também libera essa porta no firewall local e registra signaling, STUN e TURN no Talk (`occ talk:*`). Isso resolve o aviso *"Nenhum back-end de alto desempenho configurado"*.
+
+Com `--proxy`, o script configura `trusted_proxies`, `overwriteprotocol=https`, `overwritehost` e `overwrite.cli.url` com `https://`, e não emite certificado.
 
 Uma falha no Whiteboard ou no Talk HPB não interrompe a instalação: o script mostra um aviso e o Nextcloud continua funcionando sem o recurso.
 
@@ -197,6 +220,47 @@ sudo -u www-data php /var/www/nextcloud/occ talk:signaling:add https://signaling
 sudo -u www-data php /var/www/nextcloud/occ talk:turn:add turn signaling.exemplo.com.br:3478 udp,tcp --secret=SEGREDO_TURN
 ```
 
+### Atrás de um proxy reverso
+
+Com `--proxy`, o SSL fica no proxy e o servidor do Nextcloud recebe HTTP na porta 80. O proxy precisa:
+
+- encaminhar o domínio para `http://IP_DO_SERVIDOR`, com os cabeçalhos `Host` e `X-Forwarded-*`;
+- repassar WebSocket, porque o Whiteboard e o signaling do Talk usam `/whiteboard/` e `/standalone-signaling/`;
+- usar timeouts longos e aceitar uploads grandes.
+
+Exemplo para nginx (incluindo o nginx do DirectAdmin):
+
+```nginx
+location / {
+    proxy_pass http://10.0.0.10:80;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $http_connection;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+    client_max_body_size 16G;
+    proxy_buffering off;
+    proxy_request_buffering off;
+}
+```
+
+O TURN (porta 3478 TCP/UDP) não é HTTP e **não passa pelo proxy**. Ele precisa de um nome DNS próprio (`--turn-host`) que aponte direto para o servidor, com a porta encaminhada até ele.
+
+O servidor também precisa acessar o próprio domínio por HTTPS, porque o registro do signaling (`occ talk:signaling:add --verify`) e o container do Talk usam `https://DOMINIO`. Se o roteador não fizer NAT loopback, aponte o domínio para o proxy no `/etc/hosts` do servidor.
+
+Teste do WebSocket pelo proxy (a resposta esperada é `HTTP/1.1 101 Switching Protocols`):
+
+```bash
+curl -s -i -N --http1.1 --max-time 5 \
+  -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" \
+  -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+  "https://cloud.exemplo.com.br/whiteboard/socket.io/?EIO=4&transport=websocket" | head -1
+```
+
 ### HTTPS depois da instalação
 
 Se a instalação foi feita sem `--letsencrypt`, o acesso fica em HTTP. Para ativar o HTTPS depois:
@@ -217,6 +281,9 @@ sudo -u www-data php /var/www/nextcloud/occ config:system:set overwrite.cli.url 
 - **"Já existe uma instalação do Nextcloud…"**: por segurança, o script nunca sobrescreve `--install-dir` ou `--data-dir` que não estejam vazios.
 - **Falha ao baixar metadados do EPEL (RHEL 8/9)**: espelhos regionais do EPEL às vezes ficam dessincronizados por algumas horas. O script tenta uma segunda vez; se continuar falhando, aguarde e execute de novo.
 - **Whiteboard ou Talk HPB não subiram**: veja `journalctl -u nextcloud-whiteboard` ou `journalctl -u nextcloud-talk-hpb`. As causas mais comuns são falta de acesso ao `ghcr.io` e, no Talk, a porta do TURN bloqueada em um firewall externo. Se o Let's Encrypt falhar, o HPB do Talk não é instalado.
+- **TURN atrás da Cloudflare (ou outro CDN)**: o CDN só repassa HTTP(S), e as chamadas ficam sem mídia. Use em `--turn-host` um nome "DNS only" que aponte para o IP público do servidor.
+- **Aviso "Server does not support all features of this Talk version, missing features: …"**: o signaling da imagem `aio-talk` está uma versão atrás do Talk instalado. O HPB funciona mesmo assim; o aviso some quando a imagem for atualizada (`podman pull` + `systemctl restart nextcloud-talk-hpb`).
+- **`occ config:app:set` responde "Config value were not updated" para o `jwt_secret_key` do Whiteboard**: no Nextcloud 35 essa chave é `lazy` + `sensitive` e não pode ser criada por esse comando. O script usa `occ config:import`, que funciona.
 - **Let's Encrypt falhou**: a instalação continua em HTTP. Confira se o DNS do domínio aponta para o servidor e se a porta 80 está acessível, e rode o `certbot` manualmente (veja acima).
 - **Qualquer outra falha**: a mensagem mostra a linha e o comando que falharam. O log completo está em `/var/log/nextcloud-install.log`.
 
