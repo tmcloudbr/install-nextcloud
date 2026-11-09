@@ -745,6 +745,9 @@ binlog_format = ROW
 innodb_file_per_table = 1
 character_set_server = utf8mb4
 collation_server = utf8mb4_general_ci
+slow_query_log = ON
+long_query_time = 2
+innodb_log_file_size = 256M
 EOF
     systemctl enable --now mariadb
     systemctl restart mariadb
