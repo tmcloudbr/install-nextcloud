@@ -958,16 +958,19 @@ occ() {
     (cd "$NC_INSTALL_DIR" && runuser -u "$WEB_USER" -- "$PHP_BIN" occ "$@")
 }
 
-# Acrescenta um IP ao trusted_proxies (sem duplicar e sem sobrescrever os existentes)
-add_trusted_proxy() {
-    local ip="$1" line n=0
+# Acrescenta um valor a uma lista do config.php (sem duplicar e sem
+# sobrescrever os existentes): add_system_list_value CHAVE VALOR
+add_system_list_value() {
+    local key="$1" value="$2" line n=0
     while IFS= read -r line; do
         [ -n "$line" ] || continue
-        [ "$line" = "$ip" ] && return 0
+        [ "$line" = "$value" ] && return 0
         n=$((n + 1))
-    done <<< "$(occ config:system:get trusted_proxies 2>/dev/null || true)"
-    occ config:system:set trusted_proxies "$n" --value="$ip"
+    done <<< "$(occ config:system:get "$key" 2>/dev/null || true)"
+    occ config:system:set "$key" "$n" --value="$value"
 }
+
+add_trusted_proxy() { add_system_list_value trusted_proxies "$1"; }
 
 php_has_ext() { grep -qix "$1" <<< "$("$PHP_BIN" -m 2>/dev/null || true)"; }
 
@@ -1283,6 +1286,7 @@ configure_notify_push() {
     # público e recusaria com "push server is not a trusted proxy".
     add_trusted_proxy 127.0.0.1
     add_trusted_proxy ::1
+    add_system_list_value trusted_domains localhost
 
     cat > /etc/systemd/system/notify_push.service <<EOF
 # Gerado pelo instalador do Nextcloud
