@@ -59,6 +59,7 @@ WHITEBOARD_IMAGE="${WHITEBOARD_IMAGE:-ghcr.io/nextcloud-releases/whiteboard:rele
 TALK_IMAGE="${TALK_IMAGE:-ghcr.io/nextcloud-releases/aio-talk:latest}"
 WHITEBOARD_PORT=3002
 SIGNALING_PORT=8081
+NOTIFY_PUSH_PORT=7867
 SERVICES_ENV_DIR="/etc/nextcloud-services"
 
 # Faixa de versões do PHP aceitas pelo Nextcloud. Por padrão é lida do
@@ -757,10 +758,16 @@ configure_selinux() {
 # ---------------------------------------------------------------------------
 # Configuração comum
 # ---------------------------------------------------------------------------
-# Proxy reverso para os backends em container (Whiteboard e, se ativado, Talk HPB).
-# Ficam no vhost da porta 80 para o certbot copiá-los para o vhost HTTPS.
+# Proxy reverso para os serviços auxiliares (Client Push, Whiteboard e, se
+# ativado, Talk HPB). Ficam no vhost da porta 80 para o certbot copiá-los
+# para o vhost HTTPS.
 vhost_proxy_rules() {
     cat <<EOF
+    # Client Push (notify_push)
+    ProxyPass /push/ws ws://127.0.0.1:${NOTIFY_PUSH_PORT}/ws
+    ProxyPass /push/ http://127.0.0.1:${NOTIFY_PUSH_PORT}/
+    ProxyPassReverse /push/ http://127.0.0.1:${NOTIFY_PUSH_PORT}/
+
     # Backend do Whiteboard (colaboração em tempo real)
     RewriteEngine On
     ProxyPass /whiteboard/ http://127.0.0.1:${WHITEBOARD_PORT}/
@@ -951,6 +958,20 @@ occ() {
     (cd "$NC_INSTALL_DIR" && runuser -u "$WEB_USER" -- "$PHP_BIN" occ "$@")
 }
 
+# Acrescenta um valor a uma lista do config.php (sem duplicar e sem
+# sobrescrever os existentes): add_system_list_value CHAVE VALOR
+add_system_list_value() {
+    local key="$1" value="$2" line n=0
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        [ "$line" = "$value" ] && return 0
+        n=$((n + 1))
+    done <<< "$(occ config:system:get "$key" 2>/dev/null || true)"
+    occ config:system:set "$key" "$n" --value="$value"
+}
+
+add_trusted_proxy() { add_system_list_value trusted_proxies "$1"; }
+
 php_has_ext() { grep -qix "$1" <<< "$("$PHP_BIN" -m 2>/dev/null || true)"; }
 
 install_nextcloud() {
@@ -973,7 +994,7 @@ install_nextcloud() {
     fi
     if [ -n "$NC_PROXY_IP" ]; then
         # SSL terminado no proxy: o Nextcloud recebe HTTP, mas gera links em HTTPS
-        occ config:system:set trusted_proxies 0 --value="$NC_PROXY_IP"
+        add_trusted_proxy "$NC_PROXY_IP"
         occ config:system:set overwriteprotocol --value=https
         occ config:system:set overwritehost --value="$NC_DOMAIN"
         occ config:system:set overwrite.cli.url --value="https://$NC_DOMAIN"
@@ -1228,6 +1249,115 @@ configure_whiteboard() {
     fi
 }
 
+# Client Push (notify_push): avisos imediatos de mudanças para os clientes e
+# notificações do Talk sem atraso. O binário já vem dentro do app.
+configure_notify_push() {
+    log "Configurando o Client Push (notify_push)"
+    if [ -z "$(occ config:system:get redis host 2>/dev/null || true)" ]; then
+        warn "Client Push requer Redis configurado no Nextcloud — não configurado"
+        return 0
+    fi
+    if ! nc_enable_app notify_push; then
+        warn "Não foi possível habilitar o app notify_push — Client Push não configurado"
+        return 0
+    fi
+
+    local arch bin bin_dir="$NC_INSTALL_DIR/apps/notify_push/bin"
+    case "$(uname -m)" in
+        x86_64)  arch="x86_64" ;;
+        aarch64) arch="aarch64" ;;
+        armv7l)  arch="armv7" ;;
+        *) warn "Client Push: arquitetura $(uname -m) sem binário — não configurado"; return 0 ;;
+    esac
+    bin="$bin_dir/$arch/notify_push"
+    if [ ! -f "$bin" ]; then
+        warn "Binário do Client Push não encontrado em $bin — não configurado"
+        return 0
+    fi
+    chmod +x "$bin"
+    if selinux_enabled; then
+        semanage fcontext -a -t bin_t "$bin_dir(/.*)?" 2>/dev/null \
+            || semanage fcontext -m -t bin_t "$bin_dir(/.*)?"
+        restorecon -R "$bin_dir"
+    fi
+
+    # O push server conversa com o Nextcloud pela rede local (localhost), não
+    # pelo domínio público: atrás de proxy/CDN o Nextcloud enxergaria o IP
+    # público e recusaria com "push server is not a trusted proxy".
+    add_trusted_proxy 127.0.0.1
+    add_trusted_proxy ::1
+    add_system_list_value trusted_domains localhost
+
+    cat > /etc/systemd/system/notify_push.service <<EOF
+# Gerado pelo instalador do Nextcloud
+[Unit]
+Description=Nextcloud Client Push (notify_push)
+Documentation=https://github.com/nextcloud/notify_push
+After=network.target mariadb.service ${REDIS_SVC}.service ${APACHE_SVC}.service
+
+[Service]
+Type=notify
+User=${WEB_USER}
+Environment=PORT=${NOTIFY_PUSH_PORT}
+Environment=NEXTCLOUD_URL=http://localhost
+ExecStart=${bin} ${NC_INSTALL_DIR}/config/config.php
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=read-only
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    # Reinicia o push server quando o app é atualizado (binário novo)
+    cat > /etc/systemd/system/notify_push-watcher.service <<'EOF'
+# Gerado pelo instalador do Nextcloud
+[Unit]
+Description=Reinicia o Client Push quando o app notify_push é atualizado
+Requires=notify_push.service
+After=notify_push.service
+StartLimitIntervalSec=10
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart notify_push.service
+Restart=on-failure
+RestartSec=15
+EOF
+    cat > /etc/systemd/system/notify_push-watcher.path <<EOF
+# Gerado pelo instalador do Nextcloud
+[Unit]
+Description=Observa o binário do Client Push
+
+[Path]
+PathModified=${bin}
+Unit=notify_push-watcher.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    if ! systemctl enable --now notify_push.service; then
+        warn "Falha ao iniciar o Client Push — veja: journalctl -u notify_push"
+        return 0
+    fi
+    systemctl enable --now notify_push-watcher.path || true
+
+    if occ notify_push:setup "$(nc_url)/push"; then
+        ok "Client Push ativo ($(nc_url)/push)"
+    else
+        warn "occ notify_push:setup falhou — veja a mensagem acima e journalctl -u notify_push"
+    fi
+}
+
 configure_talk_hpb() {
     [ "$NC_TALK_HPB" = "yes" ] || return 0
     if ! nc_https; then
@@ -1410,6 +1540,7 @@ main() {
     configure_firewall
     configure_cron
     configure_letsencrypt
+    configure_notify_push
     configure_whiteboard
     configure_talk_hpb
     add_config_comments

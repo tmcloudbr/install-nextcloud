@@ -141,12 +141,13 @@ curl -fsSL https://raw.githubusercontent.com/tmcloudbr/install-nextcloud/main/in
 6. Cria o timer do systemd `nextcloud-cron.timer`, que roda o `cron.php` a cada 5 minutos.
 7. Ajusta SELinux (RHEL/Fedora) e libera HTTP/HTTPS no `firewalld` ou `ufw`, se estiverem ativos.
 8. Com `--letsencrypt`, emite o certificado com o `certbot` e redireciona HTTP para HTTPS.
-9. Sobe o backend do **Whiteboard** (container `ghcr.io/nextcloud-releases/whiteboard`, via Podman + systemd, ouvindo só em `127.0.0.1:3002`) e configura no app a URL `/whiteboard` e o segredo JWT. Isso resolve o aviso *"O URL do servidor WebSocket não está configurado"*.
-10. Com `--talk-hpb`, sobe o container `ghcr.io/nextcloud-releases/aio-talk` (signaling + Janus + NATS + TURN), com o signaling em `127.0.0.1:8081` e o TURN na porta 3478 TCP/UDP. Também libera essa porta no firewall local e registra signaling, STUN e TURN no Talk (`occ talk:*`). Isso resolve o aviso *"Nenhum back-end de alto desempenho configurado"*.
+9. Configura o **Client Push** (`notify_push`): habilita o app, roda como serviço `notify_push.service` o binário que vem dentro dele (ouvindo em `127.0.0.1:7867`, atrás do proxy em `/push/`), adiciona `127.0.0.1`/`::1` ao `trusted_proxies` e roda `occ notify_push:setup`. Um `notify_push-watcher.path` reinicia o serviço quando o app é atualizado. Isso resolve o aviso *"Client Push não está instalado"*.
+10. Sobe o backend do **Whiteboard** (container `ghcr.io/nextcloud-releases/whiteboard`, via Podman + systemd, ouvindo só em `127.0.0.1:3002`) e configura no app a URL `/whiteboard` e o segredo JWT. Isso resolve o aviso *"O URL do servidor WebSocket não está configurado"*.
+11. Com `--talk-hpb`, sobe o container `ghcr.io/nextcloud-releases/aio-talk` (signaling + Janus + NATS + TURN), com o signaling em `127.0.0.1:8081` e o TURN na porta 3478 TCP/UDP. Também libera essa porta no firewall local e registra signaling, STUN e TURN no Talk (`occ talk:*`). Isso resolve o aviso *"Nenhum back-end de alto desempenho configurado"*.
 
 Com `--proxy`, o script configura `trusted_proxies`, `overwriteprotocol=https`, `overwritehost` e `overwrite.cli.url` com `https://`, e não emite certificado.
 
-Uma falha no Whiteboard ou no Talk HPB não interrompe a instalação: o script mostra um aviso e o Nextcloud continua funcionando sem o recurso.
+Uma falha no Client Push, no Whiteboard ou no Talk HPB não interrompe a instalação: o script mostra um aviso e o Nextcloud continua funcionando sem o recurso.
 
 Se o download via `curl` for interrompido no meio, nada é executado: todo o código fica dentro de funções, que só são chamadas na última linha do arquivo.
 
@@ -202,8 +203,9 @@ sudo -u apache php /var/www/nextcloud/occ status
 # Tarefas em segundo plano
 systemctl list-timers nextcloud-cron.timer
 
-# Backends em container
-systemctl status nextcloud-whiteboard nextcloud-talk-hpb
+# Serviços auxiliares
+systemctl status notify_push nextcloud-whiteboard nextcloud-talk-hpb
+sudo -u www-data php /var/www/nextcloud/occ notify_push:self-test
 journalctl -u nextcloud-whiteboard -f
 
 # Atualizar as imagens dos containers
@@ -225,7 +227,7 @@ sudo -u www-data php /var/www/nextcloud/occ talk:turn:add turn signaling.exemplo
 Com `--proxy`, o SSL fica no proxy e o servidor do Nextcloud recebe HTTP na porta 80. O proxy precisa:
 
 - encaminhar o domínio para `http://IP_DO_SERVIDOR`, com os cabeçalhos `Host` e `X-Forwarded-*`;
-- repassar WebSocket, porque o Whiteboard e o signaling do Talk usam `/whiteboard/` e `/standalone-signaling/`;
+- repassar WebSocket, porque o Client Push, o Whiteboard e o signaling do Talk usam `/push/`, `/whiteboard/` e `/standalone-signaling/`;
 - usar timeouts longos e aceitar uploads grandes.
 
 Exemplo para nginx (incluindo o nginx do DirectAdmin):
@@ -281,6 +283,7 @@ sudo -u www-data php /var/www/nextcloud/occ config:system:set overwrite.cli.url 
 - **"Já existe uma instalação do Nextcloud…"**: por segurança, o script nunca sobrescreve `--install-dir` ou `--data-dir` que não estejam vazios.
 - **Falha ao baixar metadados do EPEL (RHEL 8/9)**: espelhos regionais do EPEL às vezes ficam dessincronizados por algumas horas. O script tenta uma segunda vez; se continuar falhando, aguarde e execute de novo.
 - **Whiteboard ou Talk HPB não subiram**: veja `journalctl -u nextcloud-whiteboard` ou `journalctl -u nextcloud-talk-hpb`. As causas mais comuns são falta de acesso ao `ghcr.io` e, no Talk, a porta do TURN bloqueada em um firewall externo. Se o Let's Encrypt falhar, o HPB do Talk não é instalado.
+- **Client Push: "push server is not a trusted proxy"**: o push server acessa o Nextcloud por `http://localhost` (variável `NEXTCLOUD_URL` em `/etc/systemd/system/notify_push.service`), e por isso `127.0.0.1` e `::1` precisam estar no `trusted_proxies`. Confira com `occ config:system:get trusted_proxies` e veja se não há uma segunda lista `trusted_proxies` ativa no `config.php`.
 - **TURN atrás da Cloudflare (ou outro CDN)**: o CDN só repassa HTTP(S), e as chamadas ficam sem mídia. Use em `--turn-host` um nome "DNS only" que aponte para o IP público do servidor.
 - **Aviso "Server does not support all features of this Talk version, missing features: …"**: o signaling da imagem `aio-talk` está uma versão atrás do Talk instalado. O HPB funciona mesmo assim; o aviso some quando a imagem for atualizada (`podman pull` + `systemctl restart nextcloud-talk-hpb`).
 - **`occ config:app:set` responde "Config value were not updated" para o `jwt_secret_key` do Whiteboard**: no Nextcloud 35 essa chave é `lazy` + `sensitive` e não pode ser criada por esse comando. O script usa `occ config:import`, que funciona.
