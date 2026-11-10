@@ -22,8 +22,8 @@
 # se o download via curl for interrompido no meio, nada é executado.
 
 if [ -z "${BASH_VERSION:-}" ]; then
-    echo "Este script requer bash. Use: curl -fsSL https://raw.githubusercontent.com/tmcloudbr/install-nextcloud/main/install.sh | sudo bash" >&2
-    exit 1
+  echo "Este script requer bash. Use: curl -fsSL https://raw.githubusercontent.com/tmcloudbr/install-nextcloud/main/install.sh | sudo bash" >&2
+  exit 1
 fi
 
 set -Eeuo pipefail
@@ -45,14 +45,14 @@ NC_TIMEZONE="${NC_TIMEZONE:-America/Sao_Paulo}"
 NC_PHONE_REGION="${NC_PHONE_REGION:-BR}"
 NC_LETSENCRYPT="${NC_LETSENCRYPT:-no}"
 NC_EMAIL="${NC_EMAIL:-}"
-NC_PHP_VERSION="${NC_PHP_VERSION:-}"     # vazio = automático
+NC_PHP_VERSION="${NC_PHP_VERSION:-}" # vazio = automático
 NC_FORCE="${NC_FORCE:-no}"
 NC_CHECK_ONLY="${NC_CHECK_ONLY:-no}"
 NC_TALK_HPB="${NC_TALK_HPB:-no}"
 NC_TALK_PORT="${NC_TALK_PORT:-3478}"
-NC_TALK_TURN_HOST="${NC_TALK_TURN_HOST:-}"   # vazio = mesmo domínio do Nextcloud
-NC_PROXY_IP="${NC_PROXY_IP:-}"               # proxy reverso que termina o SSL
-NC_ASSUME_YES="${NC_ASSUME_YES:-no}"         # yes = não faz perguntas
+NC_TALK_TURN_HOST="${NC_TALK_TURN_HOST:-}" # vazio = mesmo domínio do Nextcloud
+NC_PROXY_IP="${NC_PROXY_IP:-}"             # proxy reverso que termina o SSL
+NC_ASSUME_YES="${NC_ASSUME_YES:-no}"       # yes = não faz perguntas
 
 # Serviços auxiliares em container (Podman + systemd)
 WHITEBOARD_IMAGE="${WHITEBOARD_IMAGE:-ghcr.io/nextcloud-releases/whiteboard:release}"
@@ -90,27 +90,30 @@ MARIADB_CNF=""
 # Utilitários
 # ---------------------------------------------------------------------------
 if [ -t 1 ]; then
-    C_BLUE=$'\033[1;34m' C_GREEN=$'\033[1;32m' C_YELLOW=$'\033[1;33m' C_RED=$'\033[1;31m' C_RESET=$'\033[0m'
+  C_BLUE=$'\033[1;34m' C_GREEN=$'\033[1;32m' C_YELLOW=$'\033[1;33m' C_RED=$'\033[1;31m' C_RESET=$'\033[0m'
 else
-    C_BLUE="" C_GREEN="" C_YELLOW="" C_RED="" C_RESET=""
+  C_BLUE="" C_GREEN="" C_YELLOW="" C_RED="" C_RESET=""
 fi
 
-log()  { printf '%s==>%s %s\n' "$C_BLUE" "$C_RESET" "$*"; }
-ok()   { printf '%s  ✔%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
+log() { printf '%s==>%s %s\n' "$C_BLUE" "$C_RESET" "$*"; }
+ok() { printf '%s  ✔%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
 warn() { printf '%s  ⚠ %s%s\n' "$C_YELLOW" "$*" "$C_RESET" >&2; }
-die()  { printf '%s  ✖ %s%s\n' "$C_RED" "$*" "$C_RESET" >&2; exit 1; }
+die() {
+  printf '%s  ✖ %s%s\n' "$C_RED" "$*" "$C_RESET" >&2
+  exit 1
+}
 
 on_error() {
-    local code=$? line=$1 cmd=$2
-    printf '%s  ✖ Falha (código %s) na linha %s: %s%s\n' "$C_RED" "$code" "$line" "$cmd" "$C_RESET" >&2
-    printf '    Veja o log completo em %s\n' "$LOG_FILE" >&2
-    exit "$code"
+  local code=$? line=$1 cmd=$2
+  printf '%s  ✖ Falha (código %s) na linha %s: %s%s\n' "$C_RED" "$code" "$line" "$cmd" "$C_RESET" >&2
+  printf '    Veja o log completo em %s\n' "$LOG_FILE" >&2
+  exit "$code"
 }
 
 cleanup() {
-    if [ -n "$WORK_DIR" ] && [ -d "$WORK_DIR" ]; then
-        rm -rf "$WORK_DIR"
-    fi
+  if [ -n "$WORK_DIR" ] && [ -d "$WORK_DIR" ]; then
+    rm -rf "$WORK_DIR"
+  fi
 }
 
 # $1 >= $2 (comparação de versões)
@@ -119,9 +122,9 @@ ver_ge() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$2" ]; }
 php_in_range() { [ -n "$1" ] && ver_ge "$1" "$PHP_MIN" && ver_ge "$PHP_MAX" "$1"; }
 
 random_pass() {
-    local len="${1:-24}" p=""
-    p="$(LC_ALL=C tr -dc 'A-Za-z0-9' < <(head -c 2048 /dev/urandom) | head -c "$len")" || true
-    printf '%s' "$p"
+  local len="${1:-24}" p=""
+  p="$(LC_ALL=C tr -dc 'A-Za-z0-9' < <(head -c 2048 /dev/urandom) | head -c "$len")" || true
+  printf '%s' "$p"
 }
 
 is_ip() { [[ "$1" =~ ^[0-9]+(\.[0-9]+){3}$ || "$1" == *:* ]]; }
@@ -129,7 +132,7 @@ is_ip() { [[ "$1" =~ ^[0-9]+(\.[0-9]+){3}$ || "$1" == *:* ]]; }
 selinux_enabled() { command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" != "Disabled" ]; }
 
 usage() {
-    cat <<EOF
+  cat <<EOF
 Instalador do Nextcloud (Apache + PHP-FPM + MariaDB + Redis)
 
 Uso:
@@ -169,48 +172,115 @@ EOF
 }
 
 parse_args() {
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --domain)       NC_DOMAIN="${2:?--domain requer um valor}"; shift 2 ;;
-            --admin-user)   NC_ADMIN_USER="${2:?--admin-user requer um valor}"; shift 2 ;;
-            --admin-pass)   NC_ADMIN_PASS="${2:?--admin-pass requer um valor}"; shift 2 ;;
-            --db-name)      NC_DB_NAME="${2:?--db-name requer um valor}"; shift 2 ;;
-            --db-user)      NC_DB_USER="${2:?--db-user requer um valor}"; shift 2 ;;
-            --db-pass)      NC_DB_PASS="${2:?--db-pass requer um valor}"; shift 2 ;;
-            --install-dir)  NC_INSTALL_DIR="${2:?--install-dir requer um valor}"; shift 2 ;;
-            --data-dir)     NC_DATA_DIR="${2:?--data-dir requer um valor}"; shift 2 ;;
-            --version)      NC_VERSION="${2:?--version requer um valor}"; shift 2 ;;
-            --php-version)  NC_PHP_VERSION="${2:?--php-version requer um valor}"; shift 2 ;;
-            --timezone)     NC_TIMEZONE="${2:?--timezone requer um valor}"; shift 2 ;;
-            --phone-region) NC_PHONE_REGION="${2:?--phone-region requer um valor}"; shift 2 ;;
-            --email)        NC_EMAIL="${2:?--email requer um valor}"; shift 2 ;;
-            --letsencrypt)  NC_LETSENCRYPT="yes"; shift ;;
-            --talk-hpb)     NC_TALK_HPB="yes"; shift ;;
-            --turn-host)    NC_TALK_TURN_HOST="${2:?--turn-host requer um valor}"; NC_TALK_HPB="yes"; shift 2 ;;
-            --proxy)        NC_PROXY_IP="${2:?--proxy requer o IP do proxy}"; shift 2 ;;
-            -y|--yes)       NC_ASSUME_YES="yes"; shift ;;
-            --talk-port)    NC_TALK_PORT="${2:?--talk-port requer um valor}"; shift 2 ;;
-            --check)        NC_CHECK_ONLY="yes"; shift ;;
-            --force)        NC_FORCE="yes"; shift ;;
-            -h|--help)      usage; exit 0 ;;
-            *) die "Opção desconhecida: $1 (use --help)" ;;
-        esac
-    done
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --domain)
+      NC_DOMAIN="${2:?--domain requer um valor}"
+      shift 2
+      ;;
+    --admin-user)
+      NC_ADMIN_USER="${2:?--admin-user requer um valor}"
+      shift 2
+      ;;
+    --admin-pass)
+      NC_ADMIN_PASS="${2:?--admin-pass requer um valor}"
+      shift 2
+      ;;
+    --db-name)
+      NC_DB_NAME="${2:?--db-name requer um valor}"
+      shift 2
+      ;;
+    --db-user)
+      NC_DB_USER="${2:?--db-user requer um valor}"
+      shift 2
+      ;;
+    --db-pass)
+      NC_DB_PASS="${2:?--db-pass requer um valor}"
+      shift 2
+      ;;
+    --install-dir)
+      NC_INSTALL_DIR="${2:?--install-dir requer um valor}"
+      shift 2
+      ;;
+    --data-dir)
+      NC_DATA_DIR="${2:?--data-dir requer um valor}"
+      shift 2
+      ;;
+    --version)
+      NC_VERSION="${2:?--version requer um valor}"
+      shift 2
+      ;;
+    --php-version)
+      NC_PHP_VERSION="${2:?--php-version requer um valor}"
+      shift 2
+      ;;
+    --timezone)
+      NC_TIMEZONE="${2:?--timezone requer um valor}"
+      shift 2
+      ;;
+    --phone-region)
+      NC_PHONE_REGION="${2:?--phone-region requer um valor}"
+      shift 2
+      ;;
+    --email)
+      NC_EMAIL="${2:?--email requer um valor}"
+      shift 2
+      ;;
+    --letsencrypt)
+      NC_LETSENCRYPT="yes"
+      shift
+      ;;
+    --talk-hpb)
+      NC_TALK_HPB="yes"
+      shift
+      ;;
+    --turn-host)
+      NC_TALK_TURN_HOST="${2:?--turn-host requer um valor}"
+      NC_TALK_HPB="yes"
+      shift 2
+      ;;
+    --proxy)
+      NC_PROXY_IP="${2:?--proxy requer o IP do proxy}"
+      shift 2
+      ;;
+    -y | --yes)
+      NC_ASSUME_YES="yes"
+      shift
+      ;;
+    --talk-port)
+      NC_TALK_PORT="${2:?--talk-port requer um valor}"
+      shift 2
+      ;;
+    --check)
+      NC_CHECK_ONLY="yes"
+      shift
+      ;;
+    --force)
+      NC_FORCE="yes"
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *) die "Opção desconhecida: $1 (use --help)" ;;
+    esac
+  done
 
-    NC_INSTALL_DIR="${NC_INSTALL_DIR%/}"
-    NC_DATA_DIR="${NC_DATA_DIR%/}"
+  NC_INSTALL_DIR="${NC_INSTALL_DIR%/}"
+  NC_DATA_DIR="${NC_DATA_DIR%/}"
 
-    [[ "$NC_DB_NAME" =~ ^[A-Za-z0-9_]+$ ]] || die "--db-name aceita apenas letras, números e _"
-    [[ "$NC_DB_USER" =~ ^[A-Za-z0-9_]+$ ]] || die "--db-user aceita apenas letras, números e _"
-    if [ -n "$NC_DB_PASS" ] && [[ ! "$NC_DB_PASS" =~ ^[A-Za-z0-9._@%+=-]+$ ]]; then
-        die "--db-pass contém caracteres não permitidos (use letras, números e . _ @ % + = -)"
-    fi
-    if [ "$NC_VERSION" != "latest" ] && [[ ! "$NC_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        die "--version deve estar no formato X.Y.Z (ex.: 35.0.2) ou ser 'latest'"
-    fi
-    if [ -n "$NC_PHP_VERSION" ] && [[ ! "$NC_PHP_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
-        die "--php-version deve estar no formato X.Y (ex.: 8.3)"
-    fi
+  [[ "$NC_DB_NAME" =~ ^[A-Za-z0-9_]+$ ]] || die "--db-name aceita apenas letras, números e _"
+  [[ "$NC_DB_USER" =~ ^[A-Za-z0-9_]+$ ]] || die "--db-user aceita apenas letras, números e _"
+  if [ -n "$NC_DB_PASS" ] && [[ ! "$NC_DB_PASS" =~ ^[A-Za-z0-9._@%+=-]+$ ]]; then
+    die "--db-pass contém caracteres não permitidos (use letras, números e . _ @ % + = -)"
+  fi
+  if [ "$NC_VERSION" != "latest" ] && [[ ! "$NC_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    die "--version deve estar no formato X.Y.Z (ex.: 35.0.2) ou ser 'latest'"
+  fi
+  if [ -n "$NC_PHP_VERSION" ] && [[ ! "$NC_PHP_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+    die "--php-version deve estar no formato X.Y (ex.: 8.3)"
+  fi
 }
 
 # HTTPS disponível: certificado próprio (Let's Encrypt) ou proxy reverso com SSL
@@ -224,369 +294,369 @@ can_prompt() { [ "$NC_ASSUME_YES" != "yes" ] && { : </dev/tty; } 2>/dev/null; }
 
 # ask VARIAVEL "Pergunta" [padrão]
 ask() {
-    local __var="$1" __q="$2" __def="${3:-}" __ans=""
-    if [ -n "$__def" ]; then __q="$__q [$__def]"; fi
-    printf '%s%s%s ' "$C_BLUE" "$__q" "$C_RESET" >/dev/tty
-    IFS= read -r __ans </dev/tty || __ans=""
-    printf -v "$__var" '%s' "${__ans:-$__def}"
+  local __var="$1" __q="$2" __def="${3:-}" __ans=""
+  if [ -n "$__def" ]; then __q="$__q [$__def]"; fi
+  printf '%s%s%s ' "$C_BLUE" "$__q" "$C_RESET" >/dev/tty
+  IFS= read -r __ans </dev/tty || __ans=""
+  printf -v "$__var" '%s' "${__ans:-$__def}"
 }
 
 ask_yes_no() {
-    local __a=""
-    ask __a "$1 [s/N]"
-    [[ "$__a" =~ ^[sSyY] ]]
+  local __a=""
+  ask __a "$1 [s/N]"
+  [[ "$__a" =~ ^[sSyY] ]]
 }
 
 ask_questions() {
-    can_prompt || return 0
-    printf '\n%sConfiguração inicial%s (Enter aceita o padrão)\n\n' "$C_GREEN" "$C_RESET" >/dev/tty
+  can_prompt || return 0
+  printf '\n%sConfiguração inicial%s (Enter aceita o padrão)\n\n' "$C_GREEN" "$C_RESET" >/dev/tty
 
-    # 1. Proxy reverso
-    if [ -z "$NC_PROXY_IP" ] && [ "$NC_LETSENCRYPT" != "yes" ]; then
-        if ask_yes_no "O Nextcloud vai ficar atrás de um proxy reverso que cuida do SSL (ex.: DirectAdmin, nginx)?"; then
-            while :; do
-                ask NC_PROXY_IP "  IP do proxy, como este servidor o enxerga:"
-                is_ip "$NC_PROXY_IP" && break
-                printf '  IP inválido.\n' >/dev/tty
-            done
-            while [ -z "$NC_DOMAIN" ] || is_ip "$NC_DOMAIN"; do
-                ask NC_DOMAIN "  Domínio público do Nextcloud (ex.: cloud.exemplo.com.br):"
-            done
-        fi
+  # 1. Proxy reverso
+  if [ -z "$NC_PROXY_IP" ] && [ "$NC_LETSENCRYPT" != "yes" ]; then
+    if ask_yes_no "O Nextcloud vai ficar atrás de um proxy reverso que cuida do SSL (ex.: DirectAdmin, nginx)?"; then
+      while :; do
+        ask NC_PROXY_IP "  IP do proxy, como este servidor o enxerga:"
+        is_ip "$NC_PROXY_IP" && break
+        printf '  IP inválido.\n' >/dev/tty
+      done
+      while [ -z "$NC_DOMAIN" ] || is_ip "$NC_DOMAIN"; do
+        ask NC_DOMAIN "  Domínio público do Nextcloud (ex.: cloud.exemplo.com.br):"
+      done
     fi
+  fi
 
-    # 2. Nome DNS do TURN (Talk HPB)
-    if [ -z "$NC_TALK_TURN_HOST" ]; then
-        if ! nc_https; then
-            if [ "$NC_TALK_HPB" != "yes" ]; then
-                printf '  (O back-end de alto desempenho do Talk requer HTTPS — use proxy ou --letsencrypt para ativá-lo.)\n' >/dev/tty
-            fi
-        else
-            printf '\n  Back-end de alto desempenho do Talk: o nome do TURN deve apontar direto\n' >/dev/tty
-            printf '  para este servidor (sem proxy/CDN; na Cloudflare, "DNS only"), com a\n' >/dev/tty
-            printf '  porta %s TCP e UDP liberada.\n' "$NC_TALK_PORT" >/dev/tty
-            if [ "$NC_TALK_HPB" = "yes" ]; then
-                ask NC_TALK_TURN_HOST "  Nome DNS do TURN:" "$NC_DOMAIN"
-            else
-                ask NC_TALK_TURN_HOST "  Nome DNS do TURN (ex.: turn.exemplo.com.br; Enter para não instalar o HPB):"
-                if [ -n "$NC_TALK_TURN_HOST" ]; then NC_TALK_HPB="yes"; fi
-            fi
-        fi
+  # 2. Nome DNS do TURN (Talk HPB)
+  if [ -z "$NC_TALK_TURN_HOST" ]; then
+    if ! nc_https; then
+      if [ "$NC_TALK_HPB" != "yes" ]; then
+        printf '  (O back-end de alto desempenho do Talk requer HTTPS — use proxy ou --letsencrypt para ativá-lo.)\n' >/dev/tty
+      fi
+    else
+      printf '\n  Back-end de alto desempenho do Talk: o nome do TURN deve apontar direto\n' >/dev/tty
+      printf '  para este servidor (sem proxy/CDN; na Cloudflare, "DNS only"), com a\n' >/dev/tty
+      printf '  porta %s TCP e UDP liberada.\n' "$NC_TALK_PORT" >/dev/tty
+      if [ "$NC_TALK_HPB" = "yes" ]; then
+        ask NC_TALK_TURN_HOST "  Nome DNS do TURN:" "$NC_DOMAIN"
+      else
+        ask NC_TALK_TURN_HOST "  Nome DNS do TURN (ex.: turn.exemplo.com.br; Enter para não instalar o HPB):"
+        if [ -n "$NC_TALK_TURN_HOST" ]; then NC_TALK_HPB="yes"; fi
+      fi
     fi
-    printf '\n' >/dev/tty
+  fi
+  printf '\n' >/dev/tty
 }
 
 # Validações que dependem das respostas às perguntas
 validate_options() {
-    if [ "$NC_LETSENCRYPT" = "yes" ]; then
-        [ -n "$NC_DOMAIN" ] || die "--letsencrypt requer --domain"
-        is_ip "$NC_DOMAIN" && die "--letsencrypt requer um domínio (não um IP)"
-        [ -n "$NC_EMAIL" ] || die "--letsencrypt requer --email"
-    fi
-    if [ -n "$NC_PROXY_IP" ]; then
-        [ "$NC_LETSENCRYPT" = "yes" ] && die "--proxy e --letsencrypt não podem ser usados juntos (o SSL fica no proxy)"
-        is_ip "$NC_PROXY_IP" || die "--proxy requer um endereço IP"
-        [ -n "$NC_DOMAIN" ] && ! is_ip "$NC_DOMAIN" || die "--proxy requer --domain com o domínio público"
-    fi
-    if [ "$NC_TALK_HPB" = "yes" ]; then
-        nc_https || die "--talk-hpb requer HTTPS: use --proxy IP ou --letsencrypt (com --domain e --email)"
-        NC_TALK_TURN_HOST="${NC_TALK_TURN_HOST:-$NC_DOMAIN}"
-        is_hostname "$NC_TALK_TURN_HOST" || die "--turn-host inválido: $NC_TALK_TURN_HOST"
-    fi
-    if [[ ! "$NC_TALK_PORT" =~ ^[0-9]+$ ]] || [ "$NC_TALK_PORT" -lt 1 ] || [ "$NC_TALK_PORT" -gt 65535 ]; then
-        die "--talk-port deve ser um número entre 1 e 65535"
-    fi
+  if [ "$NC_LETSENCRYPT" = "yes" ]; then
+    [ -n "$NC_DOMAIN" ] || die "--letsencrypt requer --domain"
+    is_ip "$NC_DOMAIN" && die "--letsencrypt requer um domínio (não um IP)"
+    [ -n "$NC_EMAIL" ] || die "--letsencrypt requer --email"
+  fi
+  if [ -n "$NC_PROXY_IP" ]; then
+    [ "$NC_LETSENCRYPT" = "yes" ] && die "--proxy e --letsencrypt não podem ser usados juntos (o SSL fica no proxy)"
+    is_ip "$NC_PROXY_IP" || die "--proxy requer um endereço IP"
+    [ -n "$NC_DOMAIN" ] && ! is_ip "$NC_DOMAIN" || die "--proxy requer --domain com o domínio público"
+  fi
+  if [ "$NC_TALK_HPB" = "yes" ]; then
+    nc_https || die "--talk-hpb requer HTTPS: use --proxy IP ou --letsencrypt (com --domain e --email)"
+    NC_TALK_TURN_HOST="${NC_TALK_TURN_HOST:-$NC_DOMAIN}"
+    is_hostname "$NC_TALK_TURN_HOST" || die "--turn-host inválido: $NC_TALK_TURN_HOST"
+  fi
+  if [[ ! "$NC_TALK_PORT" =~ ^[0-9]+$ ]] || [ "$NC_TALK_PORT" -lt 1 ] || [ "$NC_TALK_PORT" -gt 65535 ]; then
+    die "--talk-port deve ser um número entre 1 e 65535"
+  fi
 }
 
 # ---------------------------------------------------------------------------
 # Detecção do sistema operacional
 # ---------------------------------------------------------------------------
 unsupported() {
-    if [ "$NC_FORCE" = "yes" ]; then
-        warn "$1 — continuando por causa de --force."
-    else
-        die "$1. Use --force para tentar mesmo assim."
-    fi
+  if [ "$NC_FORCE" = "yes" ]; then
+    warn "$1 — continuando por causa de --force."
+  else
+    die "$1. Use --force para tentar mesmo assim."
+  fi
 }
 
 detect_os() {
-    [ -r /etc/os-release ] || die "Não foi possível identificar o sistema (/etc/os-release ausente)."
-    # shellcheck disable=SC1091
-    . /etc/os-release
+  [ -r /etc/os-release ] || die "Não foi possível identificar o sistema (/etc/os-release ausente)."
+  # shellcheck disable=SC1091
+  . /etc/os-release
 
-    OS_ID="${ID,,}"
-    OS_VERSION="${VERSION_ID:-}"
-    OS_MAJOR="${OS_VERSION%%.*}"
-    OS_NAME="${PRETTY_NAME:-$OS_ID $OS_VERSION}"
-    OS_CODENAME="${VERSION_CODENAME:-}"
-    local like=" ${ID_LIKE:-} "
+  OS_ID="${ID,,}"
+  OS_VERSION="${VERSION_ID:-}"
+  OS_MAJOR="${OS_VERSION%%.*}"
+  OS_NAME="${PRETTY_NAME:-$OS_ID $OS_VERSION}"
+  OS_CODENAME="${VERSION_CODENAME:-}"
+  local like=" ${ID_LIKE:-} "
 
-    case "$OS_ID" in
-        debian)
-            FAMILY="debian"
-            case "$OS_MAJOR" in
-                12|13) ;;
-                *) unsupported "Debian ${OS_VERSION:-desconhecido} não é suportado (suportados: 12, 13)" ;;
-            esac
-            ;;
-        ubuntu)
-            FAMILY="debian"
-            case "$OS_VERSION" in
-                22.04|24.04|26.04) ;;
-                *) unsupported "Ubuntu ${OS_VERSION:-desconhecido} não é suportado (suportados: 22.04, 24.04, 26.04)" ;;
-            esac
-            ;;
-        rhel|rocky|almalinux|centos|ol)
-            FAMILY="rhel"
-            case "$OS_MAJOR" in
-                8|9|10) ;;
-                *) unsupported "$OS_NAME não é suportado (suportadas as versões 8, 9 e 10)" ;;
-            esac
-            ;;
-        fedora)
-            FAMILY="fedora"
-            if [[ ! "$OS_MAJOR" =~ ^[0-9]+$ ]] || [ "$OS_MAJOR" -lt 41 ]; then
-                unsupported "Fedora ${OS_VERSION:-desconhecido} não é suportado (suportado: 41 ou superior)"
-            fi
-            ;;
-        *)
-            case "$like" in
-                *" ubuntu "*|*" debian "*)            FAMILY="debian" ;;
-                *" rhel "*|*" centos "*)              FAMILY="rhel" ;;
-                *" fedora "*)                         FAMILY="fedora" ;;
-                *) die "Distribuição não suportada: $OS_NAME" ;;
-            esac
-            unsupported "$OS_NAME é um derivado de ${ID_LIKE} e não foi testado"
-            # Derivados do Ubuntu (ex.: Mint) usam o codinome do Ubuntu base
-            if [ "$FAMILY" = "debian" ] && [ -n "${UBUNTU_CODENAME:-}" ]; then
-                OS_ID="ubuntu"
-                OS_CODENAME="$UBUNTU_CODENAME"
-            fi
-            ;;
+  case "$OS_ID" in
+  debian)
+    FAMILY="debian"
+    case "$OS_MAJOR" in
+    12 | 13) ;;
+    *) unsupported "Debian ${OS_VERSION:-desconhecido} não é suportado (suportados: 12, 13)" ;;
     esac
-
-    if [ "$FAMILY" = "rhel" ] && [[ ! "$OS_MAJOR" =~ ^[0-9]+$ ]]; then
-        die "Não foi possível determinar a versão principal de $OS_NAME"
+    ;;
+  ubuntu)
+    FAMILY="debian"
+    case "$OS_VERSION" in
+    22.04 | 24.04 | 26.04) ;;
+    *) unsupported "Ubuntu ${OS_VERSION:-desconhecido} não é suportado (suportados: 22.04, 24.04, 26.04)" ;;
+    esac
+    ;;
+  rhel | rocky | almalinux | centos | ol)
+    FAMILY="rhel"
+    case "$OS_MAJOR" in
+    8 | 9 | 10) ;;
+    *) unsupported "$OS_NAME não é suportado (suportadas as versões 8, 9 e 10)" ;;
+    esac
+    ;;
+  fedora)
+    FAMILY="fedora"
+    if [[ ! "$OS_MAJOR" =~ ^[0-9]+$ ]] || [ "$OS_MAJOR" -lt 41 ]; then
+      unsupported "Fedora ${OS_VERSION:-desconhecido} não é suportado (suportado: 41 ou superior)"
     fi
+    ;;
+  *)
+    case "$like" in
+    *" ubuntu "* | *" debian "*) FAMILY="debian" ;;
+    *" rhel "* | *" centos "*) FAMILY="rhel" ;;
+    *" fedora "*) FAMILY="fedora" ;;
+    *) die "Distribuição não suportada: $OS_NAME" ;;
+    esac
+    unsupported "$OS_NAME é um derivado de ${ID_LIKE} e não foi testado"
+    # Derivados do Ubuntu (ex.: Mint) usam o codinome do Ubuntu base
+    if [ "$FAMILY" = "debian" ] && [ -n "${UBUNTU_CODENAME:-}" ]; then
+      OS_ID="ubuntu"
+      OS_CODENAME="$UBUNTU_CODENAME"
+    fi
+    ;;
+  esac
 
-    ok "Sistema detectado: $OS_NAME (família: $FAMILY)"
+  if [ "$FAMILY" = "rhel" ] && [[ ! "$OS_MAJOR" =~ ^[0-9]+$ ]]; then
+    die "Não foi possível determinar a versão principal de $OS_NAME"
+  fi
+
+  ok "Sistema detectado: $OS_NAME (família: $FAMILY)"
 }
 
 # ---------------------------------------------------------------------------
 # Verificações iniciais
 # ---------------------------------------------------------------------------
 preflight() {
-    log "Verificando pré-requisitos"
+  log "Verificando pré-requisitos"
 
-    case "$(uname -m)" in
-        x86_64|aarch64) ;;
-        *) unsupported "Arquitetura $(uname -m) não suportada (suportadas: x86_64, aarch64)" ;;
-    esac
+  case "$(uname -m)" in
+  x86_64 | aarch64) ;;
+  *) unsupported "Arquitetura $(uname -m) não suportada (suportadas: x86_64, aarch64)" ;;
+  esac
 
-    local mem_mb
-    mem_mb=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
-    if [ "$mem_mb" -lt 1024 ]; then
-        warn "Apenas ${mem_mb} MB de RAM. O recomendado é pelo menos 2 GB."
-    fi
+  local mem_mb
+  mem_mb=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
+  if [ "$mem_mb" -lt 1024 ]; then
+    warn "Apenas ${mem_mb} MB de RAM. O recomendado é pelo menos 2 GB."
+  fi
 
-    local parent free_mb
-    parent="$(dirname "$NC_INSTALL_DIR")"
-    while [ ! -d "$parent" ]; do parent="$(dirname "$parent")"; done
-    free_mb=$(df -Pm "$parent" | awk 'NR==2 {print $4}')
-    if [ "$free_mb" -lt 2048 ]; then
-        warn "Apenas ${free_mb} MB livres em $parent. Recomendado: pelo menos 2 GB + espaço para os dados."
-    fi
+  local parent free_mb
+  parent="$(dirname "$NC_INSTALL_DIR")"
+  while [ ! -d "$parent" ]; do parent="$(dirname "$parent")"; done
+  free_mb=$(df -Pm "$parent" | awk 'NR==2 {print $4}')
+  if [ "$free_mb" -lt 2048 ]; then
+    warn "Apenas ${free_mb} MB livres em $parent. Recomendado: pelo menos 2 GB + espaço para os dados."
+  fi
 
-    if [ -f "$NC_INSTALL_DIR/config/config.php" ]; then
-        die "Já existe uma instalação do Nextcloud em $NC_INSTALL_DIR. Abortando para não sobrescrever."
-    fi
-    if [ -d "$NC_INSTALL_DIR" ] && [ -n "$(ls -A "$NC_INSTALL_DIR" 2>/dev/null)" ]; then
-        die "O diretório $NC_INSTALL_DIR já existe e não está vazio."
-    fi
-    if [ -d "$NC_DATA_DIR" ] && [ -n "$(ls -A "$NC_DATA_DIR" 2>/dev/null)" ]; then
-        die "O diretório de dados $NC_DATA_DIR já existe e não está vazio."
-    fi
+  if [ -f "$NC_INSTALL_DIR/config/config.php" ]; then
+    die "Já existe uma instalação do Nextcloud em $NC_INSTALL_DIR. Abortando para não sobrescrever."
+  fi
+  if [ -d "$NC_INSTALL_DIR" ] && [ -n "$(ls -A "$NC_INSTALL_DIR" 2>/dev/null)" ]; then
+    die "O diretório $NC_INSTALL_DIR já existe e não está vazio."
+  fi
+  if [ -d "$NC_DATA_DIR" ] && [ -n "$(ls -A "$NC_DATA_DIR" 2>/dev/null)" ]; then
+    die "O diretório de dados $NC_DATA_DIR já existe e não está vazio."
+  fi
 
-    if ! curl -fsSI --max-time 15 "$NC_DOWNLOAD_BASE/" >/dev/null 2>&1; then
-        die "Sem acesso a $NC_DOWNLOAD_BASE. Verifique a conexão com a internet/DNS/proxy."
-    fi
+  if ! curl -fsSI --max-time 15 "$NC_DOWNLOAD_BASE/" >/dev/null 2>&1; then
+    die "Sem acesso a $NC_DOWNLOAD_BASE. Verifique a conexão com a internet/DNS/proxy."
+  fi
 
-    SERVER_IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')" || true
-    [ -n "$SERVER_IP" ] || SERVER_IP="$(hostname -I 2>/dev/null | awk '{print $1}')" || true
-    [ -n "$SERVER_IP" ] || SERVER_IP="127.0.0.1"
-    [ -n "$NC_DOMAIN" ] || NC_DOMAIN="$SERVER_IP"
+  SERVER_IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')" || true
+  [ -n "$SERVER_IP" ] || SERVER_IP="$(hostname -I 2>/dev/null | awk '{print $1}')" || true
+  [ -n "$SERVER_IP" ] || SERVER_IP="127.0.0.1"
+  [ -n "$NC_DOMAIN" ] || NC_DOMAIN="$SERVER_IP"
 
-    [ -n "$NC_ADMIN_PASS" ] || NC_ADMIN_PASS="$(random_pass 20)"
-    [ -n "$NC_DB_PASS" ]    || NC_DB_PASS="$(random_pass 32)"
+  [ -n "$NC_ADMIN_PASS" ] || NC_ADMIN_PASS="$(random_pass 20)"
+  [ -n "$NC_DB_PASS" ] || NC_DB_PASS="$(random_pass 32)"
 
-    ok "Pré-requisitos verificados"
+  ok "Pré-requisitos verificados"
 }
 
 # ---------------------------------------------------------------------------
 # Versão do Nextcloud e faixa de PHP exigida
 # ---------------------------------------------------------------------------
 resolve_nc_version() {
-    if [ "$NC_VERSION" = "latest" ]; then
-        local listing v
-        listing="$(curl -fsSL --retry 3 "$NC_DOWNLOAD_BASE/")" || die "Não foi possível listar $NC_DOWNLOAD_BASE"
-        v="$(grep -oE 'nextcloud-[0-9]+\.[0-9]+\.[0-9]+\.tar\.bz2"' <<< "$listing" \
-            | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -uV | tail -n1 || true)"
-        [ -n "$v" ] || die "Não foi possível determinar a versão mais recente do Nextcloud"
-        NC_VERSION="$v"
-    elif ! curl -fsSI --max-time 15 "$NC_DOWNLOAD_BASE/nextcloud-${NC_VERSION}.tar.bz2" >/dev/null 2>&1; then
-        die "Nextcloud $NC_VERSION não encontrado em $NC_DOWNLOAD_BASE"
-    fi
-    ok "Nextcloud $NC_VERSION"
+  if [ "$NC_VERSION" = "latest" ]; then
+    local listing v
+    listing="$(curl -fsSL --retry 3 "$NC_DOWNLOAD_BASE/")" || die "Não foi possível listar $NC_DOWNLOAD_BASE"
+    v="$(grep -oE 'nextcloud-[0-9]+\.[0-9]+\.[0-9]+\.tar\.bz2"' <<<"$listing" |
+      grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -uV | tail -n1 || true)"
+    [ -n "$v" ] || die "Não foi possível determinar a versão mais recente do Nextcloud"
+    NC_VERSION="$v"
+  elif ! curl -fsSI --max-time 15 "$NC_DOWNLOAD_BASE/nextcloud-${NC_VERSION}.tar.bz2" >/dev/null 2>&1; then
+    die "Nextcloud $NC_VERSION não encontrado em $NC_DOWNLOAD_BASE"
+  fi
+  ok "Nextcloud $NC_VERSION"
 }
 
 # Lê a faixa de PHP de um lib/versioncheck.php (stdin): define _MIN e _MAX
 #   if (PHP_VERSION_ID < 80300)  -> mínimo 8.3
 #   if (PHP_VERSION_ID >= 80600) -> máximo 8.5
 parse_versioncheck() {
-    local src lo hi
-    src="$(cat)"
-    lo="$(grep -oE 'PHP_VERSION_ID < [0-9]{5}' <<< "$src" | grep -oE '[0-9]{5}' | head -n1 || true)"
-    hi="$(grep -oE 'PHP_VERSION_ID >= [0-9]{5}' <<< "$src" | grep -oE '[0-9]{5}' | head -n1 || true)"
-    [ -n "$lo" ] && [ -n "$hi" ] || return 1
-    _MIN="$((lo / 10000)).$(((lo / 100) % 100))"
-    # máximo exclusivo -> maior versão menor aceita
-    if [ $(((hi / 100) % 100)) -gt 0 ]; then
-        _MAX="$((hi / 10000)).$((((hi / 100) % 100) - 1))"
-    else
-        return 1
-    fi
+  local src lo hi
+  src="$(cat)"
+  lo="$(grep -oE 'PHP_VERSION_ID < [0-9]{5}' <<<"$src" | grep -oE '[0-9]{5}' | head -n1 || true)"
+  hi="$(grep -oE 'PHP_VERSION_ID >= [0-9]{5}' <<<"$src" | grep -oE '[0-9]{5}' | head -n1 || true)"
+  [ -n "$lo" ] && [ -n "$hi" ] || return 1
+  _MIN="$((lo / 10000)).$(((lo / 100) % 100))"
+  # máximo exclusivo -> maior versão menor aceita
+  if [ $(((hi / 100) % 100)) -gt 0 ]; then
+    _MAX="$((hi / 10000)).$((((hi / 100) % 100) - 1))"
+  else
+    return 1
+  fi
 }
 
 detect_php_range() {
-    local _MIN="" _MAX="" src
-    if [ -n "$PHP_MIN" ] && [ -n "$PHP_MAX" ]; then
-        ok "Faixa de PHP definida manualmente: $PHP_MIN–$PHP_MAX"
-    elif src="$(curl -fsSL --max-time 20 --retry 2 \
-                "https://raw.githubusercontent.com/nextcloud/server/v${NC_VERSION}/lib/versioncheck.php")" \
-            && parse_versioncheck <<< "$src"; then
-        PHP_MIN="${PHP_MIN:-$_MIN}"
-        PHP_MAX="${PHP_MAX:-$_MAX}"
-        ok "Nextcloud $NC_VERSION aceita PHP $PHP_MIN–$PHP_MAX"
-    else
-        PHP_MIN="${PHP_MIN:-$PHP_MIN_DEFAULT}"
-        PHP_MAX="${PHP_MAX:-$PHP_MAX_DEFAULT}"
-        warn "Não foi possível consultar os requisitos do Nextcloud $NC_VERSION; usando PHP $PHP_MIN–$PHP_MAX (será validado após o download)"
-    fi
-    if [ -z "$PHP_TARGET" ]; then
-        if php_in_range "$PHP_PREFERRED"; then PHP_TARGET="$PHP_PREFERRED"; else PHP_TARGET="$PHP_MAX"; fi
-    fi
+  local _MIN="" _MAX="" src
+  if [ -n "$PHP_MIN" ] && [ -n "$PHP_MAX" ]; then
+    ok "Faixa de PHP definida manualmente: $PHP_MIN–$PHP_MAX"
+  elif src="$(curl -fsSL --max-time 20 --retry 2 \
+    "https://raw.githubusercontent.com/nextcloud/server/v${NC_VERSION}/lib/versioncheck.php")" &&
+    parse_versioncheck <<<"$src"; then
+    PHP_MIN="${PHP_MIN:-$_MIN}"
+    PHP_MAX="${PHP_MAX:-$_MAX}"
+    ok "Nextcloud $NC_VERSION aceita PHP $PHP_MIN–$PHP_MAX"
+  else
+    PHP_MIN="${PHP_MIN:-$PHP_MIN_DEFAULT}"
+    PHP_MAX="${PHP_MAX:-$PHP_MAX_DEFAULT}"
+    warn "Não foi possível consultar os requisitos do Nextcloud $NC_VERSION; usando PHP $PHP_MIN–$PHP_MAX (será validado após o download)"
+  fi
+  if [ -z "$PHP_TARGET" ]; then
+    if php_in_range "$PHP_PREFERRED"; then PHP_TARGET="$PHP_PREFERRED"; else PHP_TARGET="$PHP_MAX"; fi
+  fi
 }
 
 # ---------------------------------------------------------------------------
 # Família Debian / Ubuntu (apt)
 # ---------------------------------------------------------------------------
 apt_install() {
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
-        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
+    -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$@"
 }
 
 # Obs.: evitar "cmd | grep -q" — com pipefail, o SIGPIPE do cmd faz o teste falhar.
 apt_has() {
-    local out
-    out="$(apt-cache policy "$1" 2>/dev/null)" || return 1
-    [[ "$out" =~ Candidate:\ [0-9] ]]
+  local out
+  out="$(apt-cache policy "$1" 2>/dev/null)" || return 1
+  [[ "$out" =~ Candidate:\ [0-9] ]]
 }
 
 # Instala o primeiro pacote disponível da lista. Retorna 1 se nenhum existir.
 apt_install_one_of() {
-    local p
-    for p in "$@"; do
-        if apt_has "$p"; then apt_install "$p" && return 0; fi
-    done
-    return 1
+  local p
+  for p in "$@"; do
+    if apt_has "$p"; then apt_install "$p" && return 0; fi
+  done
+  return 1
 }
 
 apt_native_php() {
-    apt-cache policy php-fpm 2>/dev/null \
-        | awk '/Candidate:/ {print $2}' | sed -E 's/^[0-9]+://' | grep -oE '^[0-9]+\.[0-9]+' || true
+  apt-cache policy php-fpm 2>/dev/null |
+    awk '/Candidate:/ {print $2}' | sed -E 's/^[0-9]+://' | grep -oE '^[0-9]+\.[0-9]+' || true
 }
 
 add_php_repo_debian() {
-    if [ "$OS_ID" = "ubuntu" ]; then
-        log "Adicionando o PPA ondrej/php"
-        apt_install software-properties-common
-        LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php
-    else
-        log "Adicionando o repositório packages.sury.org/php"
-        [ -n "$OS_CODENAME" ] || die "Codinome da versão do Debian não encontrado em /etc/os-release"
-        curl -fsSL -o "$WORK_DIR/debsuryorg-archive-keyring.deb" \
-            https://packages.sury.org/debsuryorg-archive-keyring.deb
-        dpkg -i "$WORK_DIR/debsuryorg-archive-keyring.deb"
-        echo "deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ $OS_CODENAME main" \
-            > /etc/apt/sources.list.d/php-sury.list
-    fi
-    apt-get update -qq
+  if [ "$OS_ID" = "ubuntu" ]; then
+    log "Adicionando o PPA ondrej/php"
+    apt_install software-properties-common
+    LC_ALL=C.UTF-8 add-apt-repository -y ppa:ondrej/php
+  else
+    log "Adicionando o repositório packages.sury.org/php"
+    [ -n "$OS_CODENAME" ] || die "Codinome da versão do Debian não encontrado em /etc/os-release"
+    curl -fsSL -o "$WORK_DIR/debsuryorg-archive-keyring.deb" \
+      https://packages.sury.org/debsuryorg-archive-keyring.deb
+    dpkg -i "$WORK_DIR/debsuryorg-archive-keyring.deb"
+    echo "deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ $OS_CODENAME main" \
+      >/etc/apt/sources.list.d/php-sury.list
+  fi
+  apt-get update -qq
 }
 
 plan_debian() {
-    apt-get update -qq
-    local native
-    native="$(apt_native_php)"
-    if [ -n "$NC_PHP_VERSION" ]; then
-        PHP_V="$NC_PHP_VERSION"
-    elif php_in_range "$native"; then
-        PHP_V="$native"
-    else
-        PHP_V="$PHP_TARGET"
-    fi
-    if [ "$PHP_V" = "$native" ]; then
-        ok "PHP $PHP_V dos repositórios oficiais de $OS_NAME"
-    else
-        ok "PHP $PHP_V via repositório externo (o sistema oferece PHP ${native:-nenhum}; aceito: $PHP_MIN–$PHP_MAX)"
-    fi
+  apt-get update -qq
+  local native
+  native="$(apt_native_php)"
+  if [ -n "$NC_PHP_VERSION" ]; then
+    PHP_V="$NC_PHP_VERSION"
+  elif php_in_range "$native"; then
+    PHP_V="$native"
+  else
+    PHP_V="$PHP_TARGET"
+  fi
+  if [ "$PHP_V" = "$native" ]; then
+    ok "PHP $PHP_V dos repositórios oficiais de $OS_NAME"
+  else
+    ok "PHP $PHP_V via repositório externo (o sistema oferece PHP ${native:-nenhum}; aceito: $PHP_MIN–$PHP_MAX)"
+  fi
 }
 
 install_debian() {
-    log "Instalando pacotes com apt"
-    apt_install ca-certificates curl bzip2 tar gnupg tzdata
+  log "Instalando pacotes com apt"
+  apt_install ca-certificates curl bzip2 tar gnupg tzdata
 
-    if ! apt_has "php${PHP_V}-fpm"; then
-        add_php_repo_debian
-        apt_has "php${PHP_V}-fpm" || die "PHP $PHP_V não está disponível para $OS_NAME"
-    fi
+  if ! apt_has "php${PHP_V}-fpm"; then
+    add_php_repo_debian
+    apt_has "php${PHP_V}-fpm" || die "PHP $PHP_V não está disponível para $OS_NAME"
+  fi
 
-    local v="php${PHP_V}"
-    apt_install apache2 mariadb-server podman \
-        "$v-fpm" "$v-cli" "$v-common" "$v-mysql" "$v-gd" "$v-curl" "$v-mbstring" \
-        "$v-intl" "$v-xml" "$v-zip" "$v-bcmath" "$v-gmp" "$v-bz2"
+  local v="php${PHP_V}"
+  apt_install apache2 mariadb-server podman \
+    "$v-fpm" "$v-cli" "$v-common" "$v-mysql" "$v-gd" "$v-curl" "$v-mbstring" \
+    "$v-intl" "$v-xml" "$v-zip" "$v-bcmath" "$v-gmp" "$v-bz2"
 
-    apt_install_one_of redis-server valkey-server || die "Nenhum pacote Redis/Valkey disponível"
+  apt_install_one_of redis-server valkey-server || die "Nenhum pacote Redis/Valkey disponível"
 
-    # Extensões recomendadas (não impedem a instalação)
-    apt_install_one_of "$v-opcache"            || warn "OPcache não encontrado como pacote separado (pode já estar embutido)"
-    apt_install_one_of "$v-apcu" php-apcu      || warn "APCu indisponível — cache local desativado"
-    apt_install_one_of "$v-redis" php-redis    || warn "php-redis indisponível — cache/locking via Redis desativado"
-    apt_install_one_of "$v-imagick" php-imagick || warn "Imagick indisponível — miniaturas limitadas"
+  # Extensões recomendadas (não impedem a instalação)
+  apt_install_one_of "$v-opcache" || warn "OPcache não encontrado como pacote separado (pode já estar embutido)"
+  apt_install_one_of "$v-apcu" php-apcu || warn "APCu indisponível — cache local desativado"
+  apt_install_one_of "$v-redis" php-redis || warn "php-redis indisponível — cache/locking via Redis desativado"
+  apt_install_one_of "$v-imagick" php-imagick || warn "Imagick indisponível — miniaturas limitadas"
 
-    WEB_USER="www-data"
-    APACHE_SVC="apache2"
-    FPM_SVC="php${PHP_V}-fpm"
-    FPM_POOL="/etc/php/${PHP_V}/fpm/pool.d/www.conf"
-    PHP_BIN="/usr/bin/php${PHP_V}"
-    PHP_INI_FILES=("/etc/php/${PHP_V}/fpm/conf.d/90-nextcloud.ini" "/etc/php/${PHP_V}/cli/conf.d/90-nextcloud.ini")
-    MARIADB_CNF="/etc/mysql/mariadb.conf.d/90-nextcloud.cnf"
-    ok "Pacotes instalados"
+  WEB_USER="www-data"
+  APACHE_SVC="apache2"
+  FPM_SVC="php${PHP_V}-fpm"
+  FPM_POOL="/etc/php/${PHP_V}/fpm/pool.d/www.conf"
+  PHP_BIN="/usr/bin/php${PHP_V}"
+  PHP_INI_FILES=("/etc/php/${PHP_V}/fpm/conf.d/90-nextcloud.ini" "/etc/php/${PHP_V}/cli/conf.d/90-nextcloud.ini")
+  MARIADB_CNF="/etc/mysql/mariadb.conf.d/90-nextcloud.cnf"
+  ok "Pacotes instalados"
 }
 
 configure_apache_debian() {
-    log "Configurando Apache"
-    local f
-    for f in /etc/apache2/mods-enabled/php*.load; do
-        if [ -e "$f" ]; then a2dismod -q "$(basename "$f" .load)"; fi
-    done
-    a2dismod -q mpm_prefork >/dev/null 2>&1 || true
-    a2enmod -q mpm_event proxy_fcgi proxy proxy_http proxy_wstunnel setenvif rewrite headers env dir mime ssl
-    a2enconf -q "php${PHP_V}-fpm"
-    write_vhost "/etc/apache2/sites-available/nextcloud.conf"
-    a2ensite -q nextcloud
-    a2dissite -q 000-default >/dev/null 2>&1 || true
-    apache2ctl configtest
-    ok "Apache configurado"
+  log "Configurando Apache"
+  local f
+  for f in /etc/apache2/mods-enabled/php*.load; do
+    if [ -e "$f" ]; then a2dismod -q "$(basename "$f" .load)"; fi
+  done
+  a2dismod -q mpm_prefork >/dev/null 2>&1 || true
+  a2enmod -q mpm_event proxy_fcgi proxy proxy_http proxy_wstunnel setenvif rewrite headers env dir mime ssl
+  a2enconf -q "php${PHP_V}-fpm"
+  write_vhost "/etc/apache2/sites-available/nextcloud.conf"
+  a2ensite -q nextcloud
+  a2dissite -q 000-default >/dev/null 2>&1 || true
+  apache2ctl configtest
+  ok "Apache configurado"
 }
 
 # ---------------------------------------------------------------------------
@@ -594,165 +664,168 @@ configure_apache_debian() {
 # ---------------------------------------------------------------------------
 # Repete uma vez limpando os metadados (espelhos do EPEL/Remi às vezes falham)
 dnf_install() {
-    dnf install -y -q "$@" && return 0
-    warn "dnf falhou; limpando metadados e tentando novamente"
-    dnf clean metadata -q >/dev/null 2>&1 || true
-    sleep 5
-    dnf install -y -q "$@"
+  dnf install -y -q "$@" && return 0
+  warn "dnf falhou; limpando metadados e tentando novamente"
+  dnf clean metadata -q >/dev/null 2>&1 || true
+  sleep 5
+  dnf install -y -q "$@"
 }
 
 dnf_install_one_of() {
-    local p
-    for p in "$@"; do
-        dnf_install "$p" >/dev/null 2>&1 && { ok "Instalado: $p"; return 0; }
-    done
-    return 1
+  local p
+  for p in "$@"; do
+    dnf_install "$p" >/dev/null 2>&1 && {
+      ok "Instalado: $p"
+      return 0
+    }
+  done
+  return 1
 }
 
 dnf_native_php() {
-    dnf -q repoquery --qf '%{version}\n' php-cli 2>/dev/null \
-        | grep -oE '^[0-9]+\.[0-9]+' | sort -V | tail -n1 || true
+  dnf -q repoquery --qf '%{version}\n' php-cli 2>/dev/null |
+    grep -oE '^[0-9]+\.[0-9]+' | sort -V | tail -n1 || true
 }
 
 enable_epel_crb() {
-    local m="$OS_MAJOR" arch
-    arch="$(uname -m)"
-    log "Habilitando EPEL e CodeReady Builder/CRB"
-    dnf_install dnf-plugins-core || true
+  local m="$OS_MAJOR" arch
+  arch="$(uname -m)"
+  log "Habilitando EPEL e CodeReady Builder/CRB"
+  dnf_install dnf-plugins-core || true
 
-    if ! rpm -q epel-release >/dev/null 2>&1 && ! rpm -q oracle-epel-release-el"$m" >/dev/null 2>&1; then
-        case "$OS_ID" in
-            ol) dnf_install "oracle-epel-release-el$m" ;;
-            rhel) dnf_install "https://dl.fedoraproject.org/pub/epel/epel-release-latest-$m.noarch.rpm" ;;
-            *) dnf_install epel-release || dnf_install "https://dl.fedoraproject.org/pub/epel/epel-release-latest-$m.noarch.rpm" ;;
-        esac
-    fi
-
+  if ! rpm -q epel-release >/dev/null 2>&1 && ! rpm -q oracle-epel-release-el"$m" >/dev/null 2>&1; then
     case "$OS_ID" in
-        rhel) subscription-manager repos --enable "codeready-builder-for-rhel-$m-$arch-rpms" \
-                  || warn "Não foi possível habilitar o CodeReady Builder (assinatura ativa?)" ;;
-        ol)   dnf config-manager --set-enabled "ol${m}_codeready_builder" || warn "Não foi possível habilitar o CodeReady Builder" ;;
-        *)
-            if command -v crb >/dev/null 2>&1; then
-                crb enable || warn "Não foi possível habilitar o CRB"
-            elif [ "$m" = "8" ]; then
-                dnf config-manager --set-enabled powertools || warn "Não foi possível habilitar o PowerTools"
-            else
-                dnf config-manager --set-enabled crb || warn "Não foi possível habilitar o CRB"
-            fi
-            ;;
+    ol) dnf_install "oracle-epel-release-el$m" ;;
+    rhel) dnf_install "https://dl.fedoraproject.org/pub/epel/epel-release-latest-$m.noarch.rpm" ;;
+    *) dnf_install epel-release || dnf_install "https://dl.fedoraproject.org/pub/epel/epel-release-latest-$m.noarch.rpm" ;;
     esac
+  fi
+
+  case "$OS_ID" in
+  rhel) subscription-manager repos --enable "codeready-builder-for-rhel-$m-$arch-rpms" ||
+    warn "Não foi possível habilitar o CodeReady Builder (assinatura ativa?)" ;;
+  ol) dnf config-manager --set-enabled "ol${m}_codeready_builder" || warn "Não foi possível habilitar o CodeReady Builder" ;;
+  *)
+    if command -v crb >/dev/null 2>&1; then
+      crb enable || warn "Não foi possível habilitar o CRB"
+    elif [ "$m" = "8" ]; then
+      dnf config-manager --set-enabled powertools || warn "Não foi possível habilitar o PowerTools"
+    else
+      dnf config-manager --set-enabled crb || warn "Não foi possível habilitar o CRB"
+    fi
+    ;;
+  esac
 }
 
 plan_rhel() {
-    if [ "$FAMILY" = "rhel" ] && [ "$OS_MAJOR" -lt 10 ]; then
-        # EL 8/9: PHP do sistema é antigo/sem extensões PECL -> Remi (módulo)
-        PHP_V="${NC_PHP_VERSION:-$PHP_TARGET}"
-        ok "PHP $PHP_V via repositório Remi (módulo php:remi-$PHP_V)"
-        return
-    fi
-    # EL 10 e Fedora: PHP do sistema (sem módulos); Remi/Fedora fornecem PECL
-    local native
-    native="$(dnf_native_php)"
-    if [ -n "$NC_PHP_VERSION" ] && [ "$NC_PHP_VERSION" != "$native" ]; then
-        die "Em $OS_NAME só é suportado o PHP do sistema (${native:-desconhecido}); --php-version $NC_PHP_VERSION não é possível"
-    fi
-    if ! php_in_range "$native"; then
-        unsupported "PHP ${native:-desconhecido} de $OS_NAME fora da faixa suportada ($PHP_MIN–$PHP_MAX)"
-    fi
-    PHP_V="${native:-$PHP_TARGET}"
-    ok "PHP $PHP_V dos repositórios oficiais de $OS_NAME"
+  if [ "$FAMILY" = "rhel" ] && [ "$OS_MAJOR" -lt 10 ]; then
+    # EL 8/9: PHP do sistema é antigo/sem extensões PECL -> Remi (módulo)
+    PHP_V="${NC_PHP_VERSION:-$PHP_TARGET}"
+    ok "PHP $PHP_V via repositório Remi (módulo php:remi-$PHP_V)"
+    return
+  fi
+  # EL 10 e Fedora: PHP do sistema (sem módulos); Remi/Fedora fornecem PECL
+  local native
+  native="$(dnf_native_php)"
+  if [ -n "$NC_PHP_VERSION" ] && [ "$NC_PHP_VERSION" != "$native" ]; then
+    die "Em $OS_NAME só é suportado o PHP do sistema (${native:-desconhecido}); --php-version $NC_PHP_VERSION não é possível"
+  fi
+  if ! php_in_range "$native"; then
+    unsupported "PHP ${native:-desconhecido} de $OS_NAME fora da faixa suportada ($PHP_MIN–$PHP_MAX)"
+  fi
+  PHP_V="${native:-$PHP_TARGET}"
+  ok "PHP $PHP_V dos repositórios oficiais de $OS_NAME"
 }
 
 install_rhel() {
-    log "Instalando pacotes com dnf"
+  log "Instalando pacotes com dnf"
 
-    if [ "$FAMILY" = "rhel" ]; then
-        enable_epel_crb
-        log "Adicionando o repositório Remi"
-        rpm -q remi-release >/dev/null 2>&1 \
-            || dnf_install "https://rpms.remirepo.net/enterprise/remi-release-$OS_MAJOR.rpm"
+  if [ "$FAMILY" = "rhel" ]; then
+    enable_epel_crb
+    log "Adicionando o repositório Remi"
+    rpm -q remi-release >/dev/null 2>&1 ||
+      dnf_install "https://rpms.remirepo.net/enterprise/remi-release-$OS_MAJOR.rpm"
 
-        if [ "$OS_MAJOR" -lt 10 ]; then
-            dnf module reset -y -q php
-            dnf module enable -y -q "php:remi-$PHP_V" || die "Módulo php:remi-$PHP_V indisponível"
-            # MariaDB 10.11 (o padrão do EL 8/9 é antigo demais)
-            dnf module reset -y -q mariadb >/dev/null 2>&1 || true
-            if dnf module enable -y -q mariadb:10.11 >/dev/null 2>&1; then
-                ok "MariaDB 10.11 (módulo)"
-            else
-                warn "Módulo mariadb:10.11 indisponível — usando a versão padrão do sistema"
-            fi
-        fi
+    if [ "$OS_MAJOR" -lt 10 ]; then
+      dnf module reset -y -q php
+      dnf module enable -y -q "php:remi-$PHP_V" || die "Módulo php:remi-$PHP_V indisponível"
+      # MariaDB 10.11 (o padrão do EL 8/9 é antigo demais)
+      dnf module reset -y -q mariadb >/dev/null 2>&1 || true
+      if dnf module enable -y -q mariadb:10.11 >/dev/null 2>&1; then
+        ok "MariaDB 10.11 (módulo)"
+      else
+        warn "Módulo mariadb:10.11 indisponível — usando a versão padrão do sistema"
+      fi
     fi
+  fi
 
-    # curl não entra: já existe (o script roda via curl) e no EL 9 conflita com curl-minimal
-    dnf_install bzip2 tar tzdata openssl util-linux httpd mod_ssl mariadb-server podman \
-        php php-fpm php-cli php-common php-mysqlnd php-gd php-mbstring php-intl \
-        php-xml php-process php-bcmath php-gmp php-opcache php-pdo
+  # curl não entra: já existe (o script roda via curl) e no EL 9 conflita com curl-minimal
+  dnf_install bzip2 tar tzdata openssl util-linux httpd mod_ssl mariadb-server podman \
+    php php-fpm php-cli php-common php-mysqlnd php-gd php-mbstring php-intl \
+    php-xml php-process php-bcmath php-gmp php-opcache php-pdo
 
-    dnf_install_one_of php-pecl-zip php-zip || die "Extensão PHP zip indisponível"
-    dnf_install_one_of redis valkey         || die "Nenhum pacote Redis/Valkey disponível"
+  dnf_install_one_of php-pecl-zip php-zip || die "Extensão PHP zip indisponível"
+  dnf_install_one_of redis valkey || die "Nenhum pacote Redis/Valkey disponível"
 
-    dnf_install_one_of php-sodium                                  || warn "php-sodium indisponível"
-    dnf_install_one_of php-pecl-apcu                               || warn "APCu indisponível — cache local desativado"
-    dnf_install_one_of php-pecl-redis6 php-pecl-redis5 php-redis   || warn "php-redis indisponível — cache/locking via Redis desativado"
-    dnf_install_one_of php-pecl-imagick-im7 php-pecl-imagick       || warn "Imagick indisponível — miniaturas limitadas"
+  dnf_install_one_of php-sodium || warn "php-sodium indisponível"
+  dnf_install_one_of php-pecl-apcu || warn "APCu indisponível — cache local desativado"
+  dnf_install_one_of php-pecl-redis6 php-pecl-redis5 php-redis || warn "php-redis indisponível — cache/locking via Redis desativado"
+  dnf_install_one_of php-pecl-imagick-im7 php-pecl-imagick || warn "Imagick indisponível — miniaturas limitadas"
 
-    if selinux_enabled; then
-        dnf_install policycoreutils-python-utils
-    fi
+  if selinux_enabled; then
+    dnf_install policycoreutils-python-utils
+  fi
 
-    WEB_USER="apache"
-    APACHE_SVC="httpd"
-    FPM_SVC="php-fpm"
-    FPM_POOL="/etc/php-fpm.d/www.conf"
-    PHP_BIN="/usr/bin/php"
-    PHP_INI_FILES=("/etc/php.d/90-nextcloud.ini")
-    MARIADB_CNF="/etc/my.cnf.d/90-nextcloud.cnf"
-    ok "Pacotes instalados"
+  WEB_USER="apache"
+  APACHE_SVC="httpd"
+  FPM_SVC="php-fpm"
+  FPM_POOL="/etc/php-fpm.d/www.conf"
+  PHP_BIN="/usr/bin/php"
+  PHP_INI_FILES=("/etc/php.d/90-nextcloud.ini")
+  MARIADB_CNF="/etc/my.cnf.d/90-nextcloud.cnf"
+  ok "Pacotes instalados"
 }
 
 configure_apache_rhel() {
-    log "Configurando Apache"
-    # Esvazia a página de boas-vindas (manter o arquivo evita que volte em atualizações)
-    if [ -f /etc/httpd/conf.d/welcome.conf ]; then : > /etc/httpd/conf.d/welcome.conf; fi
-    write_vhost "/etc/httpd/conf.d/nextcloud.conf"
-    # O mod_ssl só gera o certificado padrão no primeiro start do httpd;
-    # sem ele o configtest falha.
-    local crt=/etc/pki/tls/certs/localhost.crt key=/etc/pki/tls/private/localhost.key
-    if [ -f /etc/httpd/conf.d/ssl.conf ] && [ ! -s "$crt" ]; then
-        if [ -x /usr/libexec/httpd-ssl-gencerts ]; then
-            /usr/libexec/httpd-ssl-gencerts
-        fi
-        if [ ! -s "$crt" ]; then
-            openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
-                -subj "/CN=${NC_DOMAIN}" -keyout "$key" -out "$crt" >/dev/null 2>&1
-            chmod 600 "$key"
-        fi
+  log "Configurando Apache"
+  # Esvazia a página de boas-vindas (manter o arquivo evita que volte em atualizações)
+  if [ -f /etc/httpd/conf.d/welcome.conf ]; then : >/etc/httpd/conf.d/welcome.conf; fi
+  write_vhost "/etc/httpd/conf.d/nextcloud.conf"
+  # O mod_ssl só gera o certificado padrão no primeiro start do httpd;
+  # sem ele o configtest falha.
+  local crt=/etc/pki/tls/certs/localhost.crt key=/etc/pki/tls/private/localhost.key
+  if [ -f /etc/httpd/conf.d/ssl.conf ] && [ ! -s "$crt" ]; then
+    if [ -x /usr/libexec/httpd-ssl-gencerts ]; then
+      /usr/libexec/httpd-ssl-gencerts
     fi
-    apachectl configtest
-    ok "Apache configurado"
+    if [ ! -s "$crt" ]; then
+      openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+        -subj "/CN=${NC_DOMAIN}" -keyout "$key" -out "$crt" >/dev/null 2>&1
+      chmod 600 "$key"
+    fi
+  fi
+  apachectl configtest
+  ok "Apache configurado"
 }
 
 configure_selinux() {
-    selinux_enabled || return 0
-    log "Configurando contextos do SELinux"
-    local ctx
-    semanage fcontext -a -t httpd_sys_content_t "$NC_INSTALL_DIR(/.*)?" 2>/dev/null \
-        || semanage fcontext -m -t httpd_sys_content_t "$NC_INSTALL_DIR(/.*)?"
-    for ctx in "$NC_DATA_DIR(/.*)?" \
-               "$NC_INSTALL_DIR/config(/.*)?" \
-               "$NC_INSTALL_DIR/apps(/.*)?" \
-               "$NC_INSTALL_DIR/.htaccess" \
-               "$NC_INSTALL_DIR/.user.ini" \
-               "$NC_INSTALL_DIR/3rdparty/aws/aws-sdk-php/src/data/logs(/.*)?"; do
-        semanage fcontext -a -t httpd_sys_rw_content_t "$ctx" 2>/dev/null \
-            || semanage fcontext -m -t httpd_sys_rw_content_t "$ctx"
-    done
-    restorecon -R "$NC_INSTALL_DIR" "$NC_DATA_DIR"
-    setsebool -P httpd_can_network_connect=1 httpd_can_network_connect_db=1 httpd_can_sendmail=1
-    ok "SELinux configurado"
+  selinux_enabled || return 0
+  log "Configurando contextos do SELinux"
+  local ctx
+  semanage fcontext -a -t httpd_sys_content_t "$NC_INSTALL_DIR(/.*)?" 2>/dev/null ||
+    semanage fcontext -m -t httpd_sys_content_t "$NC_INSTALL_DIR(/.*)?"
+  for ctx in "$NC_DATA_DIR(/.*)?" \
+    "$NC_INSTALL_DIR/config(/.*)?" \
+    "$NC_INSTALL_DIR/apps(/.*)?" \
+    "$NC_INSTALL_DIR/.htaccess" \
+    "$NC_INSTALL_DIR/.user.ini" \
+    "$NC_INSTALL_DIR/3rdparty/aws/aws-sdk-php/src/data/logs(/.*)?"; do
+    semanage fcontext -a -t httpd_sys_rw_content_t "$ctx" 2>/dev/null ||
+      semanage fcontext -m -t httpd_sys_rw_content_t "$ctx"
+  done
+  restorecon -R "$NC_INSTALL_DIR" "$NC_DATA_DIR"
+  setsebool -P httpd_can_network_connect=1 httpd_can_network_connect_db=1 httpd_can_sendmail=1
+  ok "SELinux configurado"
 }
 
 # ---------------------------------------------------------------------------
@@ -762,7 +835,7 @@ configure_selinux() {
 # ativado, Talk HPB). Ficam no vhost da porta 80 para o certbot copiá-los
 # para o vhost HTTPS.
 vhost_proxy_rules() {
-    cat <<EOF
+  cat <<EOF
     # Client Push (notify_push)
     ProxyPass /push/ws ws://127.0.0.1:${NOTIFY_PUSH_PORT}/ws
     ProxyPass /push/ http://127.0.0.1:${NOTIFY_PUSH_PORT}/
@@ -776,8 +849,8 @@ vhost_proxy_rules() {
     RewriteCond %{HTTP:Connection} upgrade [NC]
     RewriteRule ^/whiteboard/(.*) ws://127.0.0.1:${WHITEBOARD_PORT}/\$1 [P,L]
 EOF
-    if [ "$NC_TALK_HPB" = "yes" ]; then
-        cat <<EOF
+  if [ "$NC_TALK_HPB" = "yes" ]; then
+    cat <<EOF
 
     # Back-end de alto desempenho do Talk (signaling)
     ProxyPass /standalone-signaling/ http://127.0.0.1:${SIGNALING_PORT}/
@@ -786,11 +859,11 @@ EOF
     RewriteCond %{HTTP:Connection} upgrade [NC]
     RewriteRule ^/standalone-signaling/(.*) ws://127.0.0.1:${SIGNALING_PORT}/\$1 [P,L]
 EOF
-    fi
+  fi
 }
 
 write_vhost() {
-    cat > "$1" <<EOF
+  cat >"$1" <<EOF
 # Gerado pelo instalador do Nextcloud
 <VirtualHost *:80>
     ServerName ${NC_DOMAIN}
@@ -815,24 +888,24 @@ $(vhost_proxy_rules)
     CustomLog \${APACHE_LOG_DIR}/nextcloud_access.log combined
 </VirtualHost>
 EOF
-    # APACHE_LOG_DIR só existe no Debian/Ubuntu
-    if [ "$FAMILY" != "debian" ]; then
-        # shellcheck disable=SC2016  # o literal ${APACHE_LOG_DIR} é intencional
-        sed -i 's|\${APACHE_LOG_DIR}|logs|g' "$1"
-    fi
+  # APACHE_LOG_DIR só existe no Debian/Ubuntu
+  if [ "$FAMILY" != "debian" ]; then
+    # shellcheck disable=SC2016  # o literal ${APACHE_LOG_DIR} é intencional
+    sed -i 's|\${APACHE_LOG_DIR}|logs|g' "$1"
+  fi
 }
 
 configure_php() {
-    log "Configurando PHP $PHP_V"
-    # Validado só aqui: o tzdata é instalado junto com os pacotes
-    if [ ! -e "/usr/share/zoneinfo/$NC_TIMEZONE" ]; then
-        warn "Fuso horário '$NC_TIMEZONE' inválido, usando UTC."
-        NC_TIMEZONE="UTC"
-    fi
-    local f
-    for f in "${PHP_INI_FILES[@]}"; do
-        mkdir -p "$(dirname "$f")"
-        cat > "$f" <<EOF
+  log "Configurando PHP $PHP_V"
+  # Validado só aqui: o tzdata é instalado junto com os pacotes
+  if [ ! -e "/usr/share/zoneinfo/$NC_TIMEZONE" ]; then
+    warn "Fuso horário '$NC_TIMEZONE' inválido, usando UTC."
+    NC_TIMEZONE="UTC"
+  fi
+  local f
+  for f in "${PHP_INI_FILES[@]}"; do
+    mkdir -p "$(dirname "$f")"
+    cat >"$f" <<EOF
 ; Gerado pelo instalador do Nextcloud
 memory_limit = ${PHP_MEMORY_LIMIT}
 upload_max_filesize = ${UPLOAD_MAX}
@@ -851,32 +924,32 @@ opcache.revalidate_freq = 60
 
 apc.enable_cli = 1
 EOF
-    done
+  done
 
-    [ -f "$FPM_POOL" ] || die "Pool do PHP-FPM não encontrado: $FPM_POOL"
-    sed -i -E \
-        -e 's|^;?env\[PATH\].*|env[PATH] = /usr/local/bin:/usr/bin:/bin|' \
-        -e 's|^;?pm\.max_children\s*=.*|pm.max_children = 32|' \
-        -e 's|^;?pm\.start_servers\s*=.*|pm.start_servers = 8|' \
-        -e 's|^;?pm\.min_spare_servers\s*=.*|pm.min_spare_servers = 4|' \
-        -e 's|^;?pm\.max_spare_servers\s*=.*|pm.max_spare_servers = 16|' \
-        "$FPM_POOL"
-    grep -q '^env\[PATH\]' "$FPM_POOL" || echo 'env[PATH] = /usr/local/bin:/usr/bin:/bin' >> "$FPM_POOL"
+  [ -f "$FPM_POOL" ] || die "Pool do PHP-FPM não encontrado: $FPM_POOL"
+  sed -i -E \
+    -e 's|^;?env\[PATH\].*|env[PATH] = /usr/local/bin:/usr/bin:/bin|' \
+    -e 's|^;?pm\.max_children\s*=.*|pm.max_children = 32|' \
+    -e 's|^;?pm\.start_servers\s*=.*|pm.start_servers = 8|' \
+    -e 's|^;?pm\.min_spare_servers\s*=.*|pm.min_spare_servers = 4|' \
+    -e 's|^;?pm\.max_spare_servers\s*=.*|pm.max_spare_servers = 16|' \
+    "$FPM_POOL"
+  grep -q '^env\[PATH\]' "$FPM_POOL" || echo 'env[PATH] = /usr/local/bin:/usr/bin:/bin' >>"$FPM_POOL"
 
-    local real_v
-    real_v="$("$PHP_BIN" -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
-    php_in_range "$real_v" || unsupported "PHP instalado ($real_v) fora da faixa suportada ($PHP_MIN–$PHP_MAX)"
-    PHP_V="$real_v"
+  local real_v
+  real_v="$("$PHP_BIN" -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')"
+  php_in_range "$real_v" || unsupported "PHP instalado ($real_v) fora da faixa suportada ($PHP_MIN–$PHP_MAX)"
+  PHP_V="$real_v"
 
-    systemctl enable --now "$FPM_SVC"
-    systemctl restart "$FPM_SVC"
-    ok "PHP $PHP_V configurado ($FPM_SVC)"
+  systemctl enable --now "$FPM_SVC"
+  systemctl restart "$FPM_SVC"
+  ok "PHP $PHP_V configurado ($FPM_SVC)"
 }
 
 configure_mariadb() {
-    log "Configurando MariaDB"
-    mkdir -p "$(dirname "$MARIADB_CNF")"
-    cat > "$MARIADB_CNF" <<'EOF'
+  log "Configurando MariaDB"
+  mkdir -p "$(dirname "$MARIADB_CNF")"
+  cat >"$MARIADB_CNF" <<'EOF'
 # Gerado pelo instalador do Nextcloud
 [mysqld]
 transaction_isolation = READ-COMMITTED
@@ -887,14 +960,15 @@ collation_server = utf8mb4_general_ci
 slow_query_log = ON
 long_query_time = 2
 innodb_log_file_size = 256M
+table_open_cache = 4000
 EOF
-    systemctl enable --now mariadb
-    systemctl restart mariadb
+  systemctl enable --now mariadb
+  systemctl restart mariadb
 
-    DB_CLI="$(command -v mariadb || command -v mysql || true)"
-    [ -n "$DB_CLI" ] || die "Cliente do MariaDB não encontrado"
+  DB_CLI="$(command -v mariadb || command -v mysql || true)"
+  [ -n "$DB_CLI" ] || die "Cliente do MariaDB não encontrado"
 
-    "$DB_CLI" <<SQL
+  "$DB_CLI" <<SQL
 DROP USER IF EXISTS ''@'localhost';
 DROP DATABASE IF EXISTS test;
 CREATE DATABASE IF NOT EXISTS \`${NC_DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
@@ -903,124 +977,124 @@ ALTER USER '${NC_DB_USER}'@'localhost' IDENTIFIED BY '${NC_DB_PASS}';
 GRANT ALL PRIVILEGES ON \`${NC_DB_NAME}\`.* TO '${NC_DB_USER}'@'localhost';
 FLUSH PRIVILEGES;
 SQL
-    ok "Banco '${NC_DB_NAME}' e usuário '${NC_DB_USER}' criados"
+  ok "Banco '${NC_DB_NAME}' e usuário '${NC_DB_USER}' criados"
 }
 
 configure_redis() {
-    log "Iniciando Redis/Valkey"
-    local s
-    for s in redis-server redis valkey-server valkey; do
-        if [[ "$(systemctl list-unit-files --no-legend "$s.service" 2>/dev/null || true)" == "$s.service"* ]]; then
-            REDIS_SVC="$s"
-            break
-        fi
-    done
-    [ -n "$REDIS_SVC" ] || die "Serviço do Redis/Valkey não encontrado"
-    systemctl enable --now "$REDIS_SVC"
-    ok "Serviço $REDIS_SVC ativo"
+  log "Iniciando Redis/Valkey"
+  local s
+  for s in redis-server redis valkey-server valkey; do
+    if [[ "$(systemctl list-unit-files --no-legend "$s.service" 2>/dev/null || true)" == "$s.service"* ]]; then
+      REDIS_SVC="$s"
+      break
+    fi
+  done
+  [ -n "$REDIS_SVC" ] || die "Serviço do Redis/Valkey não encontrado"
+  systemctl enable --now "$REDIS_SVC"
+  ok "Serviço $REDIS_SVC ativo"
 }
 
 download_nextcloud() {
-    local file="nextcloud-${NC_VERSION}.tar.bz2"
+  local file="nextcloud-${NC_VERSION}.tar.bz2"
 
-    log "Baixando Nextcloud ($NC_VERSION)"
-    curl -fSL --retry 3 --progress-bar -o "$WORK_DIR/$file" "$NC_DOWNLOAD_BASE/$file" \
-        || die "Falha ao baixar $NC_DOWNLOAD_BASE/$file (a versão existe?)"
-    curl -fsSL --retry 3 -o "$WORK_DIR/$file.sha256" "$NC_DOWNLOAD_BASE/$file.sha256"
-    # O .sha256 pode listar outros arquivos (ex.: latest.metadata): usa só a linha do tarball
-    local expected actual
-    expected="$(awk -v f="$file" '$2 == f || $2 == "*"f {print $1; exit}' "$WORK_DIR/$file.sha256")"
-    [ -n "$expected" ] || die "Checksum de $file não encontrado em $file.sha256"
-    actual="$(sha256sum "$WORK_DIR/$file" | awk '{print $1}')"
-    [ "$expected" = "$actual" ] || die "Checksum SHA-256 inválido para $file"
-    ok "Download verificado (SHA-256)"
+  log "Baixando Nextcloud ($NC_VERSION)"
+  curl -fSL --retry 3 --progress-bar -o "$WORK_DIR/$file" "$NC_DOWNLOAD_BASE/$file" ||
+    die "Falha ao baixar $NC_DOWNLOAD_BASE/$file (a versão existe?)"
+  curl -fsSL --retry 3 -o "$WORK_DIR/$file.sha256" "$NC_DOWNLOAD_BASE/$file.sha256"
+  # O .sha256 pode listar outros arquivos (ex.: latest.metadata): usa só a linha do tarball
+  local expected actual
+  expected="$(awk -v f="$file" '$2 == f || $2 == "*"f {print $1; exit}' "$WORK_DIR/$file.sha256")"
+  [ -n "$expected" ] || die "Checksum de $file não encontrado em $file.sha256"
+  actual="$(sha256sum "$WORK_DIR/$file" | awk '{print $1}')"
+  [ "$expected" = "$actual" ] || die "Checksum SHA-256 inválido para $file"
+  ok "Download verificado (SHA-256)"
 
-    log "Extraindo para $NC_INSTALL_DIR"
-    tar -xjf "$WORK_DIR/$file" -C "$WORK_DIR"
+  log "Extraindo para $NC_INSTALL_DIR"
+  tar -xjf "$WORK_DIR/$file" -C "$WORK_DIR"
 
-    # Confirma a faixa de PHP com o próprio código baixado
-    local _MIN="" _MAX=""
-    if parse_versioncheck < "$WORK_DIR/nextcloud/lib/versioncheck.php"; then
-        if ! ver_ge "$PHP_V" "$_MIN" || ! ver_ge "$_MAX" "$PHP_V"; then
-            die "Nextcloud $NC_VERSION exige PHP $_MIN–$_MAX, mas foi instalado o PHP $PHP_V. Use --php-version X.Y."
-        fi
+  # Confirma a faixa de PHP com o próprio código baixado
+  local _MIN="" _MAX=""
+  if parse_versioncheck <"$WORK_DIR/nextcloud/lib/versioncheck.php"; then
+    if ! ver_ge "$PHP_V" "$_MIN" || ! ver_ge "$_MAX" "$PHP_V"; then
+      die "Nextcloud $NC_VERSION exige PHP $_MIN–$_MAX, mas foi instalado o PHP $PHP_V. Use --php-version X.Y."
     fi
-    mkdir -p "$(dirname "$NC_INSTALL_DIR")"
-    if [ -d "$NC_INSTALL_DIR" ]; then rmdir "$NC_INSTALL_DIR"; fi
-    mv "$WORK_DIR/nextcloud" "$NC_INSTALL_DIR"
-    mkdir -p "$NC_DATA_DIR"
-    chown -R "$WEB_USER:$WEB_USER" "$NC_INSTALL_DIR" "$NC_DATA_DIR"
-    chmod 750 "$NC_DATA_DIR"
-    ok "Arquivos instalados"
+  fi
+  mkdir -p "$(dirname "$NC_INSTALL_DIR")"
+  if [ -d "$NC_INSTALL_DIR" ]; then rmdir "$NC_INSTALL_DIR"; fi
+  mv "$WORK_DIR/nextcloud" "$NC_INSTALL_DIR"
+  mkdir -p "$NC_DATA_DIR"
+  chown -R "$WEB_USER:$WEB_USER" "$NC_INSTALL_DIR" "$NC_DATA_DIR"
+  chmod 750 "$NC_DATA_DIR"
+  ok "Arquivos instalados"
 }
 
 occ() {
-    (cd "$NC_INSTALL_DIR" && runuser -u "$WEB_USER" -- "$PHP_BIN" occ "$@")
+  (cd "$NC_INSTALL_DIR" && runuser -u "$WEB_USER" -- "$PHP_BIN" occ "$@")
 }
 
 # Acrescenta um valor a uma lista do config.php (sem duplicar e sem
 # sobrescrever os existentes): add_system_list_value CHAVE VALOR
 add_system_list_value() {
-    local key="$1" value="$2" line n=0
-    while IFS= read -r line; do
-        [ -n "$line" ] || continue
-        [ "$line" = "$value" ] && return 0
-        n=$((n + 1))
-    done <<< "$(occ config:system:get "$key" 2>/dev/null || true)"
-    occ config:system:set "$key" "$n" --value="$value"
+  local key="$1" value="$2" line n=0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    [ "$line" = "$value" ] && return 0
+    n=$((n + 1))
+  done <<<"$(occ config:system:get "$key" 2>/dev/null || true)"
+  occ config:system:set "$key" "$n" --value="$value"
 }
 
 add_trusted_proxy() { add_system_list_value trusted_proxies "$1"; }
 
-php_has_ext() { grep -qix "$1" <<< "$("$PHP_BIN" -m 2>/dev/null || true)"; }
+php_has_ext() { grep -qix "$1" <<<"$("$PHP_BIN" -m 2>/dev/null || true)"; }
 
 install_nextcloud() {
-    log "Executando a instalação do Nextcloud"
-    occ maintenance:install \
-        --database mysql \
-        --database-host localhost \
-        --database-name "$NC_DB_NAME" \
-        --database-user "$NC_DB_USER" \
-        --database-pass "$NC_DB_PASS" \
-        --admin-user "$NC_ADMIN_USER" \
-        --admin-pass "$NC_ADMIN_PASS" \
-        --data-dir "$NC_DATA_DIR"
+  log "Executando a instalação do Nextcloud"
+  occ maintenance:install \
+    --database mysql \
+    --database-host localhost \
+    --database-name "$NC_DB_NAME" \
+    --database-user "$NC_DB_USER" \
+    --database-pass "$NC_DB_PASS" \
+    --admin-user "$NC_ADMIN_USER" \
+    --admin-pass "$NC_ADMIN_PASS" \
+    --data-dir "$NC_DATA_DIR"
 
-    log "Aplicando configurações recomendadas"
-    occ config:system:set trusted_domains 0 --value=localhost
-    occ config:system:set trusted_domains 1 --value="$NC_DOMAIN"
-    if [ "$SERVER_IP" != "$NC_DOMAIN" ]; then
-        occ config:system:set trusted_domains 2 --value="$SERVER_IP"
-    fi
-    if [ -n "$NC_PROXY_IP" ]; then
-        # SSL terminado no proxy: o Nextcloud recebe HTTP, mas gera links em HTTPS
-        add_trusted_proxy "$NC_PROXY_IP"
-        occ config:system:set overwriteprotocol --value=https
-        occ config:system:set overwritehost --value="$NC_DOMAIN"
-        occ config:system:set overwrite.cli.url --value="https://$NC_DOMAIN"
-    else
-        occ config:system:set overwrite.cli.url --value="http://$NC_DOMAIN"
-    fi
-    occ config:system:set htaccess.RewriteBase --value=/
-    occ maintenance:update:htaccess
-    occ config:system:set default_phone_region --value="$NC_PHONE_REGION"
-    occ config:system:set default_timezone --value="$NC_TIMEZONE"
-    occ config:system:set maintenance_window_start --type=integer --value=1
+  log "Aplicando configurações recomendadas"
+  occ config:system:set trusted_domains 0 --value=localhost
+  occ config:system:set trusted_domains 1 --value="$NC_DOMAIN"
+  if [ "$SERVER_IP" != "$NC_DOMAIN" ]; then
+    occ config:system:set trusted_domains 2 --value="$SERVER_IP"
+  fi
+  if [ -n "$NC_PROXY_IP" ]; then
+    # SSL terminado no proxy: o Nextcloud recebe HTTP, mas gera links em HTTPS
+    add_trusted_proxy "$NC_PROXY_IP"
+    occ config:system:set overwriteprotocol --value=https
+    occ config:system:set overwritehost --value="$NC_DOMAIN"
+    occ config:system:set overwrite.cli.url --value="https://$NC_DOMAIN"
+  else
+    occ config:system:set overwrite.cli.url --value="http://$NC_DOMAIN"
+  fi
+  occ config:system:set htaccess.RewriteBase --value=/
+  occ maintenance:update:htaccess
+  occ config:system:set default_phone_region --value="$NC_PHONE_REGION"
+  occ config:system:set default_timezone --value="$NC_TIMEZONE"
+  occ config:system:set maintenance_window_start --type=integer --value=1
 
-    if php_has_ext apcu; then
-        occ config:system:set memcache.local --value='\OC\Memcache\APCu'
-    fi
-    if php_has_ext redis; then
-        occ config:system:set memcache.distributed --value='\OC\Memcache\Redis'
-        occ config:system:set memcache.locking --value='\OC\Memcache\Redis'
-        occ config:system:set redis host --value=localhost
-        occ config:system:set redis port --type=integer --value=6379
-    fi
+  if php_has_ext apcu; then
+    occ config:system:set memcache.local --value='\OC\Memcache\APCu'
+  fi
+  if php_has_ext redis; then
+    occ config:system:set memcache.distributed --value='\OC\Memcache\Redis'
+    occ config:system:set memcache.locking --value='\OC\Memcache\Redis'
+    occ config:system:set redis host --value=localhost
+    occ config:system:set redis port --type=integer --value=6379
+  fi
 
-    occ background:cron
-    occ db:add-missing-indices || warn "db:add-missing-indices falhou"
-    occ maintenance:repair --include-expensive || warn "maintenance:repair falhou"
-    ok "Nextcloud instalado e configurado"
+  occ background:cron
+  occ db:add-missing-indices || warn "db:add-missing-indices falhou"
+  occ maintenance:repair --include-expensive || warn "maintenance:repair falhou"
+  ok "Nextcloud instalado e configurado"
 }
 
 # Adiciona ao config.php blocos comentados de trusted_domains e
@@ -1028,13 +1102,16 @@ install_nextcloud() {
 # Roda por último: qualquer "occ config:system:set" (ou alteração pelo
 # painel) reescreve o config.php e remove os comentários.
 add_config_comments() {
-    local f="$NC_INSTALL_DIR/config/config.php" tmp
-    log "Adicionando configurações comentadas em $f"
-    [ "$(tail -n1 "$f")" = ");" ] || { warn "Formato inesperado de $f; configurações comentadas não adicionadas"; return 0; }
-    tmp="$(mktemp "$f.XXXXXX")"
-    {
-        head -n -1 "$f"
-        cat <<'EOF'
+  local f="$NC_INSTALL_DIR/config/config.php" tmp
+  log "Adicionando configurações comentadas em $f"
+  [ "$(tail -n1 "$f")" = ");" ] || {
+    warn "Formato inesperado de $f; configurações comentadas não adicionadas"
+    return 0
+  }
+  tmp="$(mktemp "$f.XXXXXX")"
+  {
+    head -n -1 "$f"
+    cat <<'EOF'
   # --- Configurações opcionais (adicionadas pelo instalador) ---
   # Para ativar, remova o "//" do início das linhas do bloco e ajuste os
   # valores. Ao ativar, apague o 'trusted_domains' definido acima, pois o
@@ -1056,22 +1133,22 @@ add_config_comments() {
   // ),
 );
 EOF
-    } > "$tmp"
-    if "$PHP_BIN" -l "$tmp" >/dev/null 2>&1; then
-        chown --reference="$f" "$tmp"
-        chmod --reference="$f" "$tmp"
-        mv -f "$tmp" "$f"
-        if selinux_enabled; then restorecon "$f"; fi
-        ok "Configurações comentadas adicionadas ao config.php"
-    else
-        rm -f "$tmp"
-        warn "Erro de sintaxe ao adicionar as configurações comentadas; config.php mantido sem alterações"
-    fi
+  } >"$tmp"
+  if "$PHP_BIN" -l "$tmp" >/dev/null 2>&1; then
+    chown --reference="$f" "$tmp"
+    chmod --reference="$f" "$tmp"
+    mv -f "$tmp" "$f"
+    if selinux_enabled; then restorecon "$f"; fi
+    ok "Configurações comentadas adicionadas ao config.php"
+  else
+    rm -f "$tmp"
+    warn "Erro de sintaxe ao adicionar as configurações comentadas; config.php mantido sem alterações"
+  fi
 }
 
 configure_cron() {
-    log "Configurando tarefas em segundo plano (systemd timer)"
-    cat > /etc/systemd/system/nextcloud-cron.service <<EOF
+  log "Configurando tarefas em segundo plano (systemd timer)"
+  cat >/etc/systemd/system/nextcloud-cron.service <<EOF
 [Unit]
 Description=Nextcloud cron.php
 After=network.target ${REDIS_SVC}.service mariadb.service
@@ -1082,7 +1159,7 @@ User=${WEB_USER}
 ExecStart=${PHP_BIN} -f ${NC_INSTALL_DIR}/cron.php
 KillMode=process
 EOF
-    cat > /etc/systemd/system/nextcloud-cron.timer <<'EOF'
+  cat >/etc/systemd/system/nextcloud-cron.timer <<'EOF'
 [Unit]
 Description=Executa o cron.php do Nextcloud a cada 5 minutos
 
@@ -1094,95 +1171,95 @@ Unit=nextcloud-cron.service
 [Install]
 WantedBy=timers.target
 EOF
-    systemctl daemon-reload
-    systemctl enable --now nextcloud-cron.timer
-    ok "Timer nextcloud-cron.timer ativo"
+  systemctl daemon-reload
+  systemctl enable --now nextcloud-cron.timer
+  ok "Timer nextcloud-cron.timer ativo"
 }
 
 start_apache() {
-    systemctl enable --now "$APACHE_SVC"
-    systemctl restart "$APACHE_SVC"
-    ok "Serviço $APACHE_SVC ativo"
+  systemctl enable --now "$APACHE_SVC"
+  systemctl restart "$APACHE_SVC"
+  ok "Serviço $APACHE_SVC ativo"
 }
 
 configure_firewall() {
-    if systemctl is-active --quiet firewalld 2>/dev/null; then
-        log "Liberando HTTP/HTTPS no firewalld"
-        firewall-cmd -q --permanent --add-service=http --add-service=https
-        firewall-cmd -q --reload
-        ok "firewalld atualizado"
-    elif command -v ufw >/dev/null 2>&1 && [[ "$(ufw status 2>/dev/null || true)" == *"Status: active"* ]]; then
-        log "Liberando HTTP/HTTPS no ufw"
-        ufw allow 80/tcp >/dev/null
-        ufw allow 443/tcp >/dev/null
-        ok "ufw atualizado"
-    fi
+  if systemctl is-active --quiet firewalld 2>/dev/null; then
+    log "Liberando HTTP/HTTPS no firewalld"
+    firewall-cmd -q --permanent --add-service=http --add-service=https
+    firewall-cmd -q --reload
+    ok "firewalld atualizado"
+  elif command -v ufw >/dev/null 2>&1 && [[ "$(ufw status 2>/dev/null || true)" == *"Status: active"* ]]; then
+    log "Liberando HTTP/HTTPS no ufw"
+    ufw allow 80/tcp >/dev/null
+    ufw allow 443/tcp >/dev/null
+    ok "ufw atualizado"
+  fi
 }
 
 configure_letsencrypt() {
-    [ "$NC_LETSENCRYPT" = "yes" ] || return 0
-    log "Emitindo certificado Let's Encrypt para $NC_DOMAIN"
-    if [ "$FAMILY" = "debian" ]; then
-        apt_install certbot python3-certbot-apache
-    else
-        dnf_install certbot python3-certbot-apache
-    fi
-    if certbot --apache --non-interactive --agree-tos --redirect \
-            -m "$NC_EMAIL" -d "$NC_DOMAIN"; then
-        occ config:system:set overwrite.cli.url --value="https://$NC_DOMAIN"
-        occ config:system:set overwriteprotocol --value=https
-        ok "HTTPS ativo (renovação automática configurada pelo certbot)"
-        return 0
-    fi
-    warn "Falha ao emitir o certificado. Verifique se o DNS de $NC_DOMAIN aponta para este servidor e rode:"
-    warn "  certbot --apache -d $NC_DOMAIN -m $NC_EMAIL --agree-tos --redirect"
-    NC_LETSENCRYPT="failed"
+  [ "$NC_LETSENCRYPT" = "yes" ] || return 0
+  log "Emitindo certificado Let's Encrypt para $NC_DOMAIN"
+  if [ "$FAMILY" = "debian" ]; then
+    apt_install certbot python3-certbot-apache
+  else
+    dnf_install certbot python3-certbot-apache
+  fi
+  if certbot --apache --non-interactive --agree-tos --redirect \
+    -m "$NC_EMAIL" -d "$NC_DOMAIN"; then
+    occ config:system:set overwrite.cli.url --value="https://$NC_DOMAIN"
+    occ config:system:set overwriteprotocol --value=https
+    ok "HTTPS ativo (renovação automática configurada pelo certbot)"
+    return 0
+  fi
+  warn "Falha ao emitir o certificado. Verifique se o DNS de $NC_DOMAIN aponta para este servidor e rode:"
+  warn "  certbot --apache -d $NC_DOMAIN -m $NC_EMAIL --agree-tos --redirect"
+  NC_LETSENCRYPT="failed"
 }
 
 # ---------------------------------------------------------------------------
 # Serviços auxiliares em container (Whiteboard e Talk HPB)
 # ---------------------------------------------------------------------------
 nc_url() {
-    if nc_https; then echo "https://$NC_DOMAIN"; else echo "http://$NC_DOMAIN"; fi
+  if nc_https; then echo "https://$NC_DOMAIN"; else echo "http://$NC_DOMAIN"; fi
 }
 
 # Habilita um app do Nextcloud, baixando-o da loja se não vier no pacote
 nc_enable_app() {
-    occ app:enable "$1" >/dev/null 2>&1 || occ app:install "$1"
+  occ app:enable "$1" >/dev/null 2>&1 || occ app:install "$1"
 }
 
 # Espera um serviço HTTP aceitar conexões (até ~60 s); qualquer status HTTP serve
 wait_http() {
-    local i
-    for i in $(seq 1 30); do
-        curl -sS --max-time 2 -o /dev/null "$1" 2>/dev/null && return 0
-        sleep 2
-    done
-    return 1
+  local i
+  for i in $(seq 1 30); do
+    curl -sS --max-time 2 -o /dev/null "$1" 2>/dev/null && return 0
+    sleep 2
+  done
+  return 1
 }
 
 open_port() {
-    local port="$1" proto="$2"
-    if systemctl is-active --quiet firewalld 2>/dev/null; then
-        firewall-cmd -q --permanent --add-port="$port/$proto"
-        firewall-cmd -q --reload
-    elif command -v ufw >/dev/null 2>&1 && [[ "$(ufw status 2>/dev/null || true)" == *"Status: active"* ]]; then
-        ufw allow "$port/$proto" >/dev/null
-    fi
+  local port="$1" proto="$2"
+  if systemctl is-active --quiet firewalld 2>/dev/null; then
+    firewall-cmd -q --permanent --add-port="$port/$proto"
+    firewall-cmd -q --reload
+  elif command -v ufw >/dev/null 2>&1 && [[ "$(ufw status 2>/dev/null || true)" == *"Status: active"* ]]; then
+    ufw allow "$port/$proto" >/dev/null
+  fi
 }
 
 # Cria uma unit do systemd que roda a imagem com o Podman.
 #   container_service NOME DESCRIÇÃO IMAGEM ARQUIVO_ENV [PUBLICAÇÃO_DE_PORTA...]
 container_service() {
-    local name="$1" desc="$2" image="$3" env_file="$4" podman ports="" p
-    shift 4
-    podman="$(command -v podman)" || return 1
-    for p in "$@"; do ports+=" -p $p"; done
+  local name="$1" desc="$2" image="$3" env_file="$4" podman ports="" p
+  shift 4
+  podman="$(command -v podman)" || return 1
+  for p in "$@"; do ports+=" -p $p"; done
 
-    log "Baixando a imagem $image"
-    "$podman" pull -q "$image" >/dev/null || return 1
+  log "Baixando a imagem $image"
+  "$podman" pull -q "$image" >/dev/null || return 1
 
-    cat > "/etc/systemd/system/$name.service" <<EOF
+  cat >"/etc/systemd/system/$name.service" <<EOF
 # Gerado pelo instalador do Nextcloud
 [Unit]
 Description=${desc}
@@ -1199,96 +1276,103 @@ ExecStop=${podman} stop -t 10 ${name}
 [Install]
 WantedBy=multi-user.target
 EOF
-    systemctl daemon-reload
-    systemctl enable --now "$name.service"
+  systemctl daemon-reload
+  systemctl enable --now "$name.service"
 }
 
 write_env_file() {
-    local f="$1"; shift
-    mkdir -p "$SERVICES_ENV_DIR"
-    chmod 700 "$SERVICES_ENV_DIR"
-    (umask 077; printf '%s\n' "$@" > "$f")
+  local f="$1"
+  shift
+  mkdir -p "$SERVICES_ENV_DIR"
+  chmod 700 "$SERVICES_ENV_DIR"
+  (
+    umask 077
+    printf '%s\n' "$@" >"$f"
+  )
 }
 
 configure_whiteboard() {
-    log "Configurando o backend do Whiteboard (colaboração em tempo real)"
-    local url secret env_file="$SERVICES_ENV_DIR/whiteboard.env"
-    url="$(nc_url)"
-    secret="$(random_pass 48)"
+  log "Configurando o backend do Whiteboard (colaboração em tempo real)"
+  local url secret env_file="$SERVICES_ENV_DIR/whiteboard.env"
+  url="$(nc_url)"
+  secret="$(random_pass 48)"
 
-    if ! nc_enable_app whiteboard; then
-        warn "Não foi possível habilitar o app whiteboard — backend não configurado"
-        return 0
-    fi
-    write_env_file "$env_file" "NEXTCLOUD_URL=$url" "JWT_SECRET_KEY=$secret"
-    if ! container_service nextcloud-whiteboard "Nextcloud Whiteboard (backend WebSocket)" \
-            "$WHITEBOARD_IMAGE" "$env_file" "127.0.0.1:${WHITEBOARD_PORT}:3002"; then
-        warn "Falha ao iniciar o container do Whiteboard — veja: journalctl -u nextcloud-whiteboard"
-        return 0
-    fi
-    occ config:app:set whiteboard collabBackendUrl --value="$url/whiteboard"
-    # jwt_secret_key é lazy + sensitive no lexicon do app: no Nextcloud 35 o
-    # "occ config:app:set" não consegue criá-la ("Config value were not updated"),
-    # mas o config:import grava normalmente. O arquivo é escrito antes do chown
-    # (com fs.protected_regular, o root não reescreve arquivo alheio no /tmp).
-    local import_file
-    import_file="$(mktemp)"
-    printf '{"apps":{"whiteboard":{"jwt_secret_key":"%s"}}}' "$secret" > "$import_file"
-    chmod 600 "$import_file"
-    chown "$WEB_USER" "$import_file"
-    occ config:import "$import_file" >/dev/null || warn "Falha ao gravar o segredo JWT do Whiteboard"
-    rm -f "$import_file"
-    if [ "$(occ config:app:get whiteboard jwt_secret_key 2>/dev/null || true)" != "$secret" ]; then
-        warn "O segredo JWT do Whiteboard não foi gravado — confira com: occ setupchecks"
-    fi
+  if ! nc_enable_app whiteboard; then
+    warn "Não foi possível habilitar o app whiteboard — backend não configurado"
+    return 0
+  fi
+  write_env_file "$env_file" "NEXTCLOUD_URL=$url" "JWT_SECRET_KEY=$secret"
+  if ! container_service nextcloud-whiteboard "Nextcloud Whiteboard (backend WebSocket)" \
+    "$WHITEBOARD_IMAGE" "$env_file" "127.0.0.1:${WHITEBOARD_PORT}:3002"; then
+    warn "Falha ao iniciar o container do Whiteboard — veja: journalctl -u nextcloud-whiteboard"
+    return 0
+  fi
+  occ config:app:set whiteboard collabBackendUrl --value="$url/whiteboard"
+  # jwt_secret_key é lazy + sensitive no lexicon do app: no Nextcloud 35 o
+  # "occ config:app:set" não consegue criá-la ("Config value were not updated"),
+  # mas o config:import grava normalmente. O arquivo é escrito antes do chown
+  # (com fs.protected_regular, o root não reescreve arquivo alheio no /tmp).
+  local import_file
+  import_file="$(mktemp)"
+  printf '{"apps":{"whiteboard":{"jwt_secret_key":"%s"}}}' "$secret" >"$import_file"
+  chmod 600 "$import_file"
+  chown "$WEB_USER" "$import_file"
+  occ config:import "$import_file" >/dev/null || warn "Falha ao gravar o segredo JWT do Whiteboard"
+  rm -f "$import_file"
+  if [ "$(occ config:app:get whiteboard jwt_secret_key 2>/dev/null || true)" != "$secret" ]; then
+    warn "O segredo JWT do Whiteboard não foi gravado — confira com: occ setupchecks"
+  fi
 
-    if wait_http "http://127.0.0.1:${WHITEBOARD_PORT}/"; then
-        ok "Whiteboard em tempo real ativo ($url/whiteboard)"
-    else
-        warn "O backend do Whiteboard ainda não respondeu — veja: journalctl -u nextcloud-whiteboard"
-    fi
+  if wait_http "http://127.0.0.1:${WHITEBOARD_PORT}/"; then
+    ok "Whiteboard em tempo real ativo ($url/whiteboard)"
+  else
+    warn "O backend do Whiteboard ainda não respondeu — veja: journalctl -u nextcloud-whiteboard"
+  fi
 }
 
 # Client Push (notify_push): avisos imediatos de mudanças para os clientes e
 # notificações do Talk sem atraso. O binário já vem dentro do app.
 configure_notify_push() {
-    log "Configurando o Client Push (notify_push)"
-    if [ -z "$(occ config:system:get redis host 2>/dev/null || true)" ]; then
-        warn "Client Push requer Redis configurado no Nextcloud — não configurado"
-        return 0
-    fi
-    if ! nc_enable_app notify_push; then
-        warn "Não foi possível habilitar o app notify_push — Client Push não configurado"
-        return 0
-    fi
+  log "Configurando o Client Push (notify_push)"
+  if [ -z "$(occ config:system:get redis host 2>/dev/null || true)" ]; then
+    warn "Client Push requer Redis configurado no Nextcloud — não configurado"
+    return 0
+  fi
+  if ! nc_enable_app notify_push; then
+    warn "Não foi possível habilitar o app notify_push — Client Push não configurado"
+    return 0
+  fi
 
-    local arch bin bin_dir="$NC_INSTALL_DIR/apps/notify_push/bin"
-    case "$(uname -m)" in
-        x86_64)  arch="x86_64" ;;
-        aarch64) arch="aarch64" ;;
-        armv7l)  arch="armv7" ;;
-        *) warn "Client Push: arquitetura $(uname -m) sem binário — não configurado"; return 0 ;;
-    esac
-    bin="$bin_dir/$arch/notify_push"
-    if [ ! -f "$bin" ]; then
-        warn "Binário do Client Push não encontrado em $bin — não configurado"
-        return 0
-    fi
-    chmod +x "$bin"
-    if selinux_enabled; then
-        semanage fcontext -a -t bin_t "$bin_dir(/.*)?" 2>/dev/null \
-            || semanage fcontext -m -t bin_t "$bin_dir(/.*)?"
-        restorecon -R "$bin_dir"
-    fi
+  local arch bin bin_dir="$NC_INSTALL_DIR/apps/notify_push/bin"
+  case "$(uname -m)" in
+  x86_64) arch="x86_64" ;;
+  aarch64) arch="aarch64" ;;
+  armv7l) arch="armv7" ;;
+  *)
+    warn "Client Push: arquitetura $(uname -m) sem binário — não configurado"
+    return 0
+    ;;
+  esac
+  bin="$bin_dir/$arch/notify_push"
+  if [ ! -f "$bin" ]; then
+    warn "Binário do Client Push não encontrado em $bin — não configurado"
+    return 0
+  fi
+  chmod +x "$bin"
+  if selinux_enabled; then
+    semanage fcontext -a -t bin_t "$bin_dir(/.*)?" 2>/dev/null ||
+      semanage fcontext -m -t bin_t "$bin_dir(/.*)?"
+    restorecon -R "$bin_dir"
+  fi
 
-    # O push server conversa com o Nextcloud pela rede local (localhost), não
-    # pelo domínio público: atrás de proxy/CDN o Nextcloud enxergaria o IP
-    # público e recusaria com "push server is not a trusted proxy".
-    add_trusted_proxy 127.0.0.1
-    add_trusted_proxy ::1
-    add_system_list_value trusted_domains localhost
+  # O push server conversa com o Nextcloud pela rede local (localhost), não
+  # pelo domínio público: atrás de proxy/CDN o Nextcloud enxergaria o IP
+  # público e recusaria com "push server is not a trusted proxy".
+  add_trusted_proxy 127.0.0.1
+  add_trusted_proxy ::1
+  add_system_list_value trusted_domains localhost
 
-    cat > /etc/systemd/system/notify_push.service <<EOF
+  cat >/etc/systemd/system/notify_push.service <<EOF
 # Gerado pelo instalador do Nextcloud
 [Unit]
 Description=Nextcloud Client Push (notify_push)
@@ -1316,8 +1400,8 @@ RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 [Install]
 WantedBy=multi-user.target
 EOF
-    # Reinicia o push server quando o app é atualizado (binário novo)
-    cat > /etc/systemd/system/notify_push-watcher.service <<'EOF'
+  # Reinicia o push server quando o app é atualizado (binário novo)
+  cat >/etc/systemd/system/notify_push-watcher.service <<'EOF'
 # Gerado pelo instalador do Nextcloud
 [Unit]
 Description=Reinicia o Client Push quando o app notify_push é atualizado
@@ -1332,7 +1416,7 @@ ExecStart=/usr/bin/systemctl restart notify_push.service
 Restart=on-failure
 RestartSec=15
 EOF
-    cat > /etc/systemd/system/notify_push-watcher.path <<EOF
+  cat >/etc/systemd/system/notify_push-watcher.path <<EOF
 # Gerado pelo instalador do Nextcloud
 [Unit]
 Description=Observa o binário do Client Push
@@ -1344,72 +1428,72 @@ Unit=notify_push-watcher.service
 [Install]
 WantedBy=multi-user.target
 EOF
-    systemctl daemon-reload
-    if ! systemctl enable --now notify_push.service; then
-        warn "Falha ao iniciar o Client Push — veja: journalctl -u notify_push"
-        return 0
-    fi
-    systemctl enable --now notify_push-watcher.path || true
+  systemctl daemon-reload
+  if ! systemctl enable --now notify_push.service; then
+    warn "Falha ao iniciar o Client Push — veja: journalctl -u notify_push"
+    return 0
+  fi
+  systemctl enable --now notify_push-watcher.path || true
 
-    if occ notify_push:setup "$(nc_url)/push"; then
-        ok "Client Push ativo ($(nc_url)/push)"
-    else
-        warn "occ notify_push:setup falhou — veja a mensagem acima e journalctl -u notify_push"
-    fi
+  if occ notify_push:setup "$(nc_url)/push"; then
+    ok "Client Push ativo ($(nc_url)/push)"
+  else
+    warn "occ notify_push:setup falhou — veja a mensagem acima e journalctl -u notify_push"
+  fi
 }
 
 configure_talk_hpb() {
-    [ "$NC_TALK_HPB" = "yes" ] || return 0
-    if ! nc_https; then
-        warn "Back-end de alto desempenho do Talk não instalado: requer HTTPS, e o Let's Encrypt falhou"
-        return 0
-    fi
-    log "Configurando o back-end de alto desempenho do Talk"
-    local turn_secret signaling_secret internal_secret env_file="$SERVICES_ENV_DIR/talk-hpb.env"
-    turn_secret="$(random_pass 48)"
-    signaling_secret="$(random_pass 48)"
-    internal_secret="$(random_pass 48)"
+  [ "$NC_TALK_HPB" = "yes" ] || return 0
+  if ! nc_https; then
+    warn "Back-end de alto desempenho do Talk não instalado: requer HTTPS, e o Let's Encrypt falhou"
+    return 0
+  fi
+  log "Configurando o back-end de alto desempenho do Talk"
+  local turn_secret signaling_secret internal_secret env_file="$SERVICES_ENV_DIR/talk-hpb.env"
+  turn_secret="$(random_pass 48)"
+  signaling_secret="$(random_pass 48)"
+  internal_secret="$(random_pass 48)"
 
-    if ! nc_enable_app spreed; then
-        warn "Não foi possível habilitar o app spreed (Talk) — HPB não configurado"
-        return 0
-    fi
-    write_env_file "$env_file" \
-        "NC_DOMAIN=$NC_DOMAIN" \
-        "TALK_HOST=$NC_TALK_TURN_HOST" \
-        "TURN_DOMAIN=$NC_TALK_TURN_HOST" \
-        "TALK_PORT=$NC_TALK_PORT" \
-        "TURN_SECRET=$turn_secret" \
-        "SIGNALING_SECRET=$signaling_secret" \
-        "INTERNAL_SECRET=$internal_secret" \
-        "TZ=$NC_TIMEZONE"
-    if ! container_service nextcloud-talk-hpb "Nextcloud Talk HPB (signaling + Janus + NATS + TURN)" \
-            "$TALK_IMAGE" "$env_file" \
-            "127.0.0.1:${SIGNALING_PORT}:8081" \
-            "${NC_TALK_PORT}:${NC_TALK_PORT}/tcp" "${NC_TALK_PORT}:${NC_TALK_PORT}/udp"; then
-        warn "Falha ao iniciar o container do Talk HPB — veja: journalctl -u nextcloud-talk-hpb"
-        return 0
-    fi
-    open_port "$NC_TALK_PORT" tcp
-    open_port "$NC_TALK_PORT" udp
+  if ! nc_enable_app spreed; then
+    warn "Não foi possível habilitar o app spreed (Talk) — HPB não configurado"
+    return 0
+  fi
+  write_env_file "$env_file" \
+    "NC_DOMAIN=$NC_DOMAIN" \
+    "TALK_HOST=$NC_TALK_TURN_HOST" \
+    "TURN_DOMAIN=$NC_TALK_TURN_HOST" \
+    "TALK_PORT=$NC_TALK_PORT" \
+    "TURN_SECRET=$turn_secret" \
+    "SIGNALING_SECRET=$signaling_secret" \
+    "INTERNAL_SECRET=$internal_secret" \
+    "TZ=$NC_TIMEZONE"
+  if ! container_service nextcloud-talk-hpb "Nextcloud Talk HPB (signaling + Janus + NATS + TURN)" \
+    "$TALK_IMAGE" "$env_file" \
+    "127.0.0.1:${SIGNALING_PORT}:8081" \
+    "${NC_TALK_PORT}:${NC_TALK_PORT}/tcp" "${NC_TALK_PORT}:${NC_TALK_PORT}/udp"; then
+    warn "Falha ao iniciar o container do Talk HPB — veja: journalctl -u nextcloud-talk-hpb"
+    return 0
+  fi
+  open_port "$NC_TALK_PORT" tcp
+  open_port "$NC_TALK_PORT" udp
 
-    if ! wait_http "http://127.0.0.1:${SIGNALING_PORT}/api/v1/welcome"; then
-        warn "O signaling do Talk não respondeu — veja: journalctl -u nextcloud-talk-hpb"
-        return 0
-    fi
-    occ talk:signaling:add "https://$NC_DOMAIN/standalone-signaling/" "$signaling_secret" --verify \
-        || warn "Falha ao registrar o signaling no Talk (este servidor precisa acessar https://$NC_DOMAIN)"
-    occ talk:stun:add "$NC_TALK_TURN_HOST:$NC_TALK_PORT" || warn "Falha ao registrar o STUN no Talk"
-    occ talk:turn:add turn "$NC_TALK_TURN_HOST:$NC_TALK_PORT" udp,tcp --secret="$turn_secret" \
-        || warn "Falha ao registrar o TURN no Talk"
-    ok "Talk HPB ativo (signaling em https://$NC_DOMAIN/standalone-signaling/, TURN em $NC_TALK_TURN_HOST:$NC_TALK_PORT TCP/UDP)"
+  if ! wait_http "http://127.0.0.1:${SIGNALING_PORT}/api/v1/welcome"; then
+    warn "O signaling do Talk não respondeu — veja: journalctl -u nextcloud-talk-hpb"
+    return 0
+  fi
+  occ talk:signaling:add "https://$NC_DOMAIN/standalone-signaling/" "$signaling_secret" --verify ||
+    warn "Falha ao registrar o signaling no Talk (este servidor precisa acessar https://$NC_DOMAIN)"
+  occ talk:stun:add "$NC_TALK_TURN_HOST:$NC_TALK_PORT" || warn "Falha ao registrar o STUN no Talk"
+  occ talk:turn:add turn "$NC_TALK_TURN_HOST:$NC_TALK_PORT" udp,tcp --secret="$turn_secret" ||
+    warn "Falha ao registrar o TURN no Talk"
+  ok "Talk HPB ativo (signaling em https://$NC_DOMAIN/standalone-signaling/, TURN em $NC_TALK_TURN_HOST:$NC_TALK_PORT TCP/UDP)"
 }
 
 save_credentials() {
-    local proto="http"
-    if nc_https; then proto="https"; fi
-    umask 077
-    cat > "$CREDENTIALS_FILE" <<EOF
+  local proto="http"
+  if nc_https; then proto="https"; fi
+  umask 077
+  cat >"$CREDENTIALS_FILE" <<EOF
 # Nextcloud — credenciais geradas em $(date '+%Y-%m-%d %H:%M:%S')
 URL:            ${proto}://${NC_DOMAIN}
 Administrador:  ${NC_ADMIN_USER}
@@ -1425,9 +1509,9 @@ PHP:            ${PHP_V} (${FPM_SVC})
 
 Segredos dos serviços em container (Whiteboard/Talk): ${SERVICES_ENV_DIR}/
 EOF
-    chmod 600 "$CREDENTIALS_FILE"
+  chmod 600 "$CREDENTIALS_FILE"
 
-    cat <<EOF
+  cat <<EOF
 
 ${C_GREEN}════════════════════════════════════════════════════════════${C_RESET}
 ${C_GREEN} Nextcloud instalado com sucesso!${C_RESET}
@@ -1439,34 +1523,34 @@ ${C_GREEN}═══════════════════════�
   Credenciais:    ${CREDENTIALS_FILE} (somente root)
   Log:            ${LOG_FILE}
 EOF
-    if [ -n "$NC_PROXY_IP" ]; then
-        cat <<EOF
+  if [ -n "$NC_PROXY_IP" ]; then
+    cat <<EOF
 
   ${C_YELLOW}Proxy reverso (${NC_PROXY_IP}):${C_RESET} encaminhe https://${NC_DOMAIN} para
   http://${SERVER_IP}, repassando WebSocket (cabeçalhos Upgrade/Connection,
   HTTP/1.1 e timeout longo) — necessário para o Whiteboard e o Talk.
 EOF
-    fi
-    if [ "$NC_TALK_HPB" = "yes" ]; then
-        cat <<EOF
+  fi
+  if [ "$NC_TALK_HPB" = "yes" ]; then
+    cat <<EOF
 
   ${C_YELLOW}Talk HPB:${C_RESET} ${NC_TALK_TURN_HOST} deve apontar direto para este servidor
   (sem proxy/CDN), com a porta ${NC_TALK_PORT} TCP e UDP liberada até ele.
 EOF
-    fi
-    if ! nc_https; then
-        cat <<EOF
+  fi
+  if ! nc_https; then
+    cat <<EOF
 
   ${C_YELLOW}O acesso está em HTTP. Para produção, configure HTTPS:${C_RESET}
     curl ... | sudo bash -s -- --domain seu.dominio --letsencrypt --email voce@dominio
     (ou rode o certbot manualmente)
 EOF
-    fi
-    echo
+  fi
+  echo
 }
 
 print_plan() {
-    cat <<EOF
+  cat <<EOF
 
 Plano de instalação:
   Sistema:        $OS_NAME (família $FAMILY)
@@ -1479,72 +1563,72 @@ Plano de instalação:
   Let's Encrypt:  $NC_LETSENCRYPT
   Proxy reverso:  ${NC_PROXY_IP:-não}
   Whiteboard:     backend em tempo real (Podman)
-  Talk HPB:       $NC_TALK_HPB$( [ "$NC_TALK_HPB" = "yes" ] && echo " (TURN em $NC_TALK_TURN_HOST:$NC_TALK_PORT TCP/UDP)" )
+  Talk HPB:       $NC_TALK_HPB$([ "$NC_TALK_HPB" = "yes" ] && echo " (TURN em $NC_TALK_TURN_HOST:$NC_TALK_PORT TCP/UDP)")
 
 EOF
 }
 
 # ---------------------------------------------------------------------------
 main() {
-    parse_args "$@"
-    [ "$(id -u)" -eq 0 ] || die "Execute como root (ex.: curl ... | sudo bash)"
-    command -v systemctl >/dev/null 2>&1 || die "systemd é necessário"
-    ask_questions
-    validate_options
+  parse_args "$@"
+  [ "$(id -u)" -eq 0 ] || die "Execute como root (ex.: curl ... | sudo bash)"
+  command -v systemctl >/dev/null 2>&1 || die "systemd é necessário"
+  ask_questions
+  validate_options
 
-    # O script pode estar sendo lido do stdin (curl | bash): nenhum comando
-    # filho deve consumir o stdin.
-    exec </dev/null
+  # O script pode estar sendo lido do stdin (curl | bash): nenhum comando
+  # filho deve consumir o stdin.
+  exec </dev/null
 
-    touch "$LOG_FILE" && chmod 600 "$LOG_FILE"
-    exec > >(tee -a "$LOG_FILE") 2>&1
-    trap 'on_error "$LINENO" "$BASH_COMMAND"' ERR
-    trap cleanup EXIT
-    WORK_DIR="$(mktemp -d)"
+  touch "$LOG_FILE" && chmod 600 "$LOG_FILE"
+  exec > >(tee -a "$LOG_FILE") 2>&1
+  trap 'on_error "$LINENO" "$BASH_COMMAND"' ERR
+  trap cleanup EXIT
+  WORK_DIR="$(mktemp -d)"
 
-    log "Instalador do Nextcloud — $(date '+%Y-%m-%d %H:%M:%S')"
-    detect_os
-    preflight
-    resolve_nc_version
-    detect_php_range
+  log "Instalador do Nextcloud — $(date '+%Y-%m-%d %H:%M:%S')"
+  detect_os
+  preflight
+  resolve_nc_version
+  detect_php_range
 
-    case "$FAMILY" in
-        debian)      plan_debian ;;
-        rhel|fedora) plan_rhel ;;
-    esac
-    print_plan
+  case "$FAMILY" in
+  debian) plan_debian ;;
+  rhel | fedora) plan_rhel ;;
+  esac
+  print_plan
 
-    if [ "$NC_CHECK_ONLY" = "yes" ]; then
-        ok "Modo --check: nenhuma alteração foi feita."
-        exit 0
-    fi
+  if [ "$NC_CHECK_ONLY" = "yes" ]; then
+    ok "Modo --check: nenhuma alteração foi feita."
+    exit 0
+  fi
 
-    case "$FAMILY" in
-        debian)      install_debian ;;
-        rhel|fedora) install_rhel ;;
-    esac
+  case "$FAMILY" in
+  debian) install_debian ;;
+  rhel | fedora) install_rhel ;;
+  esac
 
-    configure_php
-    configure_mariadb
-    configure_redis
-    download_nextcloud
+  configure_php
+  configure_mariadb
+  configure_redis
+  download_nextcloud
 
-    case "$FAMILY" in
-        debian)      configure_apache_debian ;;
-        rhel|fedora) configure_apache_rhel ;;
-    esac
+  case "$FAMILY" in
+  debian) configure_apache_debian ;;
+  rhel | fedora) configure_apache_rhel ;;
+  esac
 
-    install_nextcloud
-    configure_selinux
-    start_apache
-    configure_firewall
-    configure_cron
-    configure_letsencrypt
-    configure_notify_push
-    configure_whiteboard
-    configure_talk_hpb
-    add_config_comments
-    save_credentials
+  install_nextcloud
+  configure_selinux
+  start_apache
+  configure_firewall
+  configure_cron
+  configure_letsencrypt
+  configure_notify_push
+  configure_whiteboard
+  configure_talk_hpb
+  add_config_comments
+  save_credentials
 }
 
 main "$@"
