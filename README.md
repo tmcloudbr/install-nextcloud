@@ -133,7 +133,7 @@ curl -fsSL https://raw.githubusercontent.com/tmcloudbr/install-nextcloud/main/in
 1. Detecta a distribuição e a versão e verifica arquitetura, memória, disco, conectividade e se já existe uma instalação no destino.
 2. Instala Apache, PHP-FPM com as extensões exigidas e recomendadas (APCu, Redis, Imagick, OPcache…), MariaDB e Redis (ou Valkey), adicionando os repositórios externos só quando necessários.
 3. Configura:
-   - **PHP**: `memory_limit` 512M, uploads de até 16 GB, OPcache e o pool do PHP-FPM;
+   - **PHP**: `memory_limit` 1024M, uploads de até 16 GB, OPcache e o pool do PHP-FPM;
    - **MariaDB**: `READ-COMMITTED`, `utf8mb4`, `innodb_log_file_size` 256M, log de consultas lentas (> 2 s), banco e usuário dedicados;
    - **Apache**: `mpm_event` + `proxy_fcgi`, virtual host em `*:80`, cabeçalho HSTS e proxy WebSocket para `/whiteboard/` (e `/standalone-signaling/` com `--talk-hpb`).
 4. Baixa o Nextcloud, confere o **SHA-256** e instala com `occ maintenance:install`.
